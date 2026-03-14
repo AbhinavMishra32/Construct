@@ -1,0 +1,174 @@
+{
+  "id": "construct.workflow-runtime.v1",
+  "name": "Construct Workflow Runtime",
+  "version": "1.0.0",
+  "description": "Build the workflow runtime that executes typed nodes and conditional edges in the Construct sample project.",
+  "projectRoot": "playbooks/sample",
+  "sourceProjectRoot": "playbooks/sample",
+  "language": "typescript",
+  "entrypoints": ["src/index.ts"],
+  "files": {
+    "src/state.ts": "import { WorkflowState } from './types';\n\nexport interface StatePatch {\n  value?: number;\n  flagUpdates?: Record<string, boolean>;\n  historyEntry?: string;\n}\n\nexport function mergeState(state: WorkflowState, patch: StatePatch): WorkflowState {\n  // TASK:state-merge\n  throw new Error('Implement mergeState');\n}\n",
+    "src/graph.ts": "import { pickNextEdge } from './edge';\nimport { WorkflowEdge, WorkflowNode, WorkflowState } from './types';\n\nexport class WorkflowGraph {\n  readonly start: string;\n  private readonly nodes = new Map<string, WorkflowNode>();\n\n  constructor(nodes: WorkflowNode[], private readonly edges: WorkflowEdge[], start: string) {\n    this.start = start;\n\n    for (const node of nodes) {\n      this.nodes.set(node.id, node);\n    }\n  }\n\n  getNode(id: string): WorkflowNode {\n    const node = this.nodes.get(id);\n\n    if (!node) {\n      throw new Error(`Unknown node: ${id}`);\n    }\n\n    return node;\n  }\n\n  next(currentId: string, state: WorkflowState): string | undefined {\n    // TASK:graph-next\n    throw new Error('Implement WorkflowGraph.next');\n  }\n}\n",
+    "src/runner.ts": "import { WorkflowGraph } from './graph';\nimport { WorkflowState } from './types';\n\nexport interface RunResult {\n  state: WorkflowState;\n  visited: string[];\n}\n\nexport async function runWorkflow(graph: WorkflowGraph, initialState: WorkflowState): Promise<RunResult> {\n  // TASK:runner-loop\n  throw new Error('Implement runWorkflow');\n}\n"
+  },
+  "steps": [
+    {
+      "id": "step.state-merge",
+      "title": "Implement immutable workflow state updates",
+      "summary": "Return a new state object while merging flags and appending history entries in order.",
+      "doc": "Construct treats workflow state as immutable so snapshots, retries, and learner diffs stay deterministic.",
+      "anchor": {
+        "file": "src/state.ts",
+        "marker": "TASK:state-merge"
+      },
+      "tests": ["tests/state.test.ts"],
+      "concepts": ["immutability", "object merging"],
+      "constraints": ["Do not mutate the incoming state.", "Preserve existing flags unless explicitly overridden."],
+      "checks": [
+        {
+          "id": "check.state.1",
+          "type": "mcq",
+          "prompt": "Why should Construct return a new workflow state instead of mutating the old one?",
+          "options": [
+            {
+              "id": "a",
+              "label": "It keeps snapshots and retries deterministic."
+            },
+            {
+              "id": "b",
+              "label": "It makes the code shorter."
+            }
+          ],
+          "answer": "a"
+        }
+      ],
+      "estimatedMinutes": 10,
+      "difficulty": "intro"
+    },
+    {
+      "id": "step.graph-next",
+      "title": "Resolve the next node from conditional edges",
+      "summary": "Select the first matching edge for the current state and return its destination.",
+      "doc": "Graph traversal is state-aware. The runtime should inspect outgoing edges in order and follow the first condition that matches.",
+      "anchor": {
+        "file": "src/graph.ts",
+        "marker": "TASK:graph-next"
+      },
+      "tests": ["tests/graph.test.ts"],
+      "concepts": ["graph traversal", "branching logic"],
+      "constraints": ["Return undefined when no edge matches.", "Evaluate edges in their declared order."],
+      "checks": [
+        {
+          "id": "check.graph.1",
+          "type": "short-answer",
+          "prompt": "What should the graph do when multiple outgoing edges exist?",
+          "rubric": ["Mention evaluating conditions in order.", "Mention returning the first matching edge."]
+        }
+      ],
+      "estimatedMinutes": 12,
+      "difficulty": "core"
+    },
+    {
+      "id": "step.runner-loop",
+      "title": "Execute the workflow loop",
+      "summary": "Walk from the graph start node until there is no next node, returning final state and visit order.",
+      "doc": "The runner is the core runtime. It repeatedly executes the current node, updates state, and resolves the next node based on graph edges.",
+      "anchor": {
+        "file": "src/runner.ts",
+        "marker": "TASK:runner-loop"
+      },
+      "tests": ["tests/runner.test.ts"],
+      "concepts": ["async control flow", "runtime orchestration"],
+      "constraints": ["Track visit order.", "Stop when there is no next node.", "Guard against runaway execution."],
+      "checks": [
+        {
+          "id": "check.runner.1",
+          "type": "mcq",
+          "prompt": "When should the workflow loop stop?",
+          "options": [
+            {
+              "id": "a",
+              "label": "When graph.next returns undefined."
+            },
+            {
+              "id": "b",
+              "label": "After exactly three nodes."
+            }
+          ],
+          "answer": "a"
+        }
+      ],
+      "estimatedMinutes": 15,
+      "difficulty": "core"
+    }
+  ],
+  "dependencyGraph": {
+    "nodes": [
+      {
+        "id": "component.state",
+        "label": "Workflow state",
+        "kind": "component"
+      },
+      {
+        "id": "component.graph",
+        "label": "Workflow graph",
+        "kind": "component"
+      },
+      {
+        "id": "component.runner",
+        "label": "Workflow runner",
+        "kind": "component"
+      },
+      {
+        "id": "skill.immutability",
+        "label": "Immutability",
+        "kind": "skill"
+      },
+      {
+        "id": "skill.branching",
+        "label": "Branching",
+        "kind": "skill"
+      },
+      {
+        "id": "skill.async",
+        "label": "Async control flow",
+        "kind": "skill"
+      }
+    ],
+    "edges": [
+      {
+        "from": "skill.immutability",
+        "to": "component.state",
+        "reason": "State updates require immutable merges."
+      },
+      {
+        "from": "component.state",
+        "to": "component.graph",
+        "reason": "Edge conditions inspect workflow state."
+      },
+      {
+        "from": "skill.branching",
+        "to": "component.graph",
+        "reason": "Conditional traversal depends on branching logic."
+      },
+      {
+        "from": "component.graph",
+        "to": "component.runner",
+        "reason": "The runner depends on graph navigation."
+      },
+      {
+        "from": "skill.async",
+        "to": "component.runner",
+        "reason": "Node execution is asynchronous."
+      }
+    ]
+  },
+  "metadata": {
+    "createdBy": "Construct Phase 1",
+    "createdAt": "2025-03-15T00:00:00.000Z",
+    "targetLanguage": "typescript",
+    "tags": ["construct", "workflow", "playbook"]
+  }
+}
+

@@ -1,0 +1,21 @@
+{
+  "name": "construct",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.23.0",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "validate:sample": "pnpm --filter @construct/shared validate:sample",
+    "verify:phase1": "pnpm validate:sample && pnpm --filter @construct/runner sample:test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.2",
+    "turbo": "^2.4.0",
+    "typescript": "^5.8.2"
+  }
+}
+
