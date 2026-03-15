@@ -89,12 +89,31 @@ export const TaskFailureSchema = z.object({
   stackTrace: z.string().min(1).optional()
 });
 
+export const TestAdapterSchema = z.enum(["jest", "cargo", "pytest"]);
+
+export const TaskExecutionRequestSchema = z.object({
+  stepId: z.string().min(1),
+  projectRoot: z.string().min(1),
+  tests: z.array(z.string().min(1)).min(1),
+  adapter: TestAdapterSchema.default("jest"),
+  timeoutMs: z.number().int().positive().max(120_000).default(15_000)
+});
+
+export const BlueprintTaskRequestSchema = z.object({
+  blueprintPath: z.string().min(1),
+  stepId: z.string().min(1),
+  timeoutMs: z.number().int().positive().max(120_000).default(15_000)
+});
+
 export const TaskResultSchema = z.object({
   stepId: z.string().min(1),
   status: z.enum(["passed", "failed"]),
+  adapter: TestAdapterSchema,
   durationMs: z.number().int().nonnegative(),
   testsRun: z.array(z.string().min(1)).min(1),
   failures: z.array(TaskFailureSchema).default([]),
+  exitCode: z.number().int().nullable().default(null),
+  timedOut: z.boolean().default(false),
   stdout: z.string().default(""),
   stderr: z.string().default("")
 });
@@ -135,6 +154,9 @@ export type AnchorRef = z.infer<typeof AnchorSchema>;
 export type ComprehensionCheck = z.infer<typeof ComprehensionCheckSchema>;
 export type BlueprintStep = z.infer<typeof BlueprintStepSchema>;
 export type ProjectBlueprint = z.infer<typeof ProjectBlueprintSchema>;
+export type TestAdapterKind = z.infer<typeof TestAdapterSchema>;
+export type TaskExecutionRequest = z.infer<typeof TaskExecutionRequestSchema>;
+export type BlueprintTaskRequest = z.infer<typeof BlueprintTaskRequestSchema>;
 export type TaskFailure = z.infer<typeof TaskFailureSchema>;
 export type TaskResult = z.infer<typeof TaskResultSchema>;
 export type LearnerModel = z.infer<typeof LearnerModelSchema>;
