@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -19,7 +19,7 @@ import {
   type TestAdapterKind
 } from "@construct/shared";
 
-const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
 const JEST_CONFIG_CANDIDATES = [
   "jest.config.cjs",
   "jest.config.js",
@@ -340,10 +340,14 @@ function inferAdapterFromBlueprint(blueprint: ProjectBlueprint): TestAdapterKind
 
 function normalizeTaskExecutionRequest(request: TaskExecutionRequest): TaskExecutionRequest {
   const parsedRequest = TaskExecutionRequestSchema.parse(request);
+  const projectRoot = resolveToRealPath(parsedRequest.projectRoot);
+
   return {
     ...parsedRequest,
-    projectRoot: path.resolve(parsedRequest.projectRoot),
-    tests: parsedRequest.tests.map((testPath) => path.resolve(parsedRequest.projectRoot, testPath))
+    projectRoot,
+    tests: parsedRequest.tests.map((testPath) =>
+      resolveToRealPath(path.resolve(projectRoot, testPath))
+    )
   };
 }
 
@@ -433,6 +437,16 @@ function findUpwardPath(startDirectory: string, relativePath: string): string | 
     }
 
     currentDirectory = nextDirectory;
+  }
+}
+
+function resolveToRealPath(candidatePath: string): string {
+  const resolvedPath = path.resolve(candidatePath);
+
+  try {
+    return realpathSync(resolvedPath);
+  } catch {
+    return resolvedPath;
   }
 }
 

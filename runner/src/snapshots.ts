@@ -72,7 +72,7 @@ export class SnapshotService {
           const [commitId, timestamp, message] = entry.split("\x1f");
           return {
             commitId,
-            timestamp,
+            timestamp: normalizeSnapshotTimestamp(timestamp),
             message,
             fileDiffs: await this.diffSnapshot(commitId)
           } satisfies SnapshotRecord;
@@ -144,7 +144,7 @@ export class SnapshotService {
 
     return {
       commitId,
-      timestamp,
+      timestamp: normalizeSnapshotTimestamp(timestamp),
       message,
       fileDiffs: await this.diffSnapshot(commitId)
     };
@@ -167,3 +167,6 @@ export class SnapshotService {
   }
 }
 
+function normalizeSnapshotTimestamp(timestamp: string): string {
+  return new Date(timestamp).toISOString();
+}

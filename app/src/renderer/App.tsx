@@ -13,12 +13,15 @@ import {
   type CheckReview
 } from "./lib/guide";
 import {
-  executeBlueprintTask,
   fetchBlueprint,
+  fetchLearnerModel,
   fetchRunnerHealth,
+  fetchTaskProgress,
   fetchWorkspaceFile,
   fetchWorkspaceFiles,
-  saveWorkspaceFile
+  saveWorkspaceFile,
+  startBlueprintTask,
+  submitBlueprintTask
 } from "./lib/api";
 import { buildWorkspaceTree } from "./lib/tree";
 import { monaco } from "./monaco";
@@ -26,10 +29,14 @@ import type {
   AnchorLocation,
   BlueprintStep,
   ComprehensionCheck,
+  LearnerModel,
   ProjectBlueprint,
   RunnerHealth,
   RuntimeInfo,
+  TaskProgress,
   TaskResult,
+  TaskSession,
+  TaskTelemetry,
   TreeNode,
   WorkspaceFileEntry
 } from "./types";
@@ -69,12 +76,18 @@ export default function App() {
   const [checkReviews, setCheckReviews] = useState<Record<string, CheckReview>>({});
   const [taskRunState, setTaskRunState] = useState<TaskRunState>("idle");
   const [taskResult, setTaskResult] = useState<TaskResult | null>(null);
+  const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
+  const [taskSession, setTaskSession] = useState<TaskSession | null>(null);
+  const [learnerModel, setLearnerModel] = useState<LearnerModel | null>(null);
+  const [taskTelemetry, setTaskTelemetry] = useState<TaskTelemetry>(createEmptyTelemetry());
   const [taskError, setTaskError] = useState("");
   const [guideVisible, setGuideVisible] = useState(false);
   const [revealedHintLevel, setRevealedHintLevel] = useState(0);
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
   const decorationIdsRef = useRef<string[]>([]);
   const activeRequestIdRef = useRef(0);
+  const telemetryRef = useRef<TaskTelemetry>(createEmptyTelemetry());
+  const pendingPasteCharsRef = useRef(0);
 
   const activeStep = useMemo(
     () => blueprint?.steps.find((step) => step.id === activeStepId) ?? null,
@@ -118,6 +131,8 @@ export default function App() {
   }, [activeStep, checkResponses]);
   const activeTaskResult =
     activeStep && taskResult?.stepId === activeStep.id ? taskResult : null;
+  const activeTaskProgress =
+    activeStep && taskProgress?.stepId === activeStep.id ? taskProgress : null;
   const blueprintPath = blueprint
     ? resolveBlueprintDefinitionPath(blueprint.projectRoot)
     : "";
@@ -130,6 +145,14 @@ export default function App() {
       : saveState === "error"
         ? "Save failed"
         : "Saved";
+  const snapshotLabel = taskSession
+    ? `snapshot ${formatCommitId(taskSession.preTaskSnapshot.commitId)}`
+    : "No snapshot";
+  const taskAttemptLabel = activeTaskProgress
+    ? `${activeTaskProgress.totalAttempts} attempt${
+        activeTaskProgress.totalAttempts === 1 ? "" : "s"
+      }`
+    : "No attempts";
 
   useEffect(() => {
     document.documentElement.dataset.constructTheme = theme;
@@ -141,15 +164,17 @@ export default function App() {
 
     const loadWorkspace = async () => {
       try {
-        const [health, blueprintEnvelope, filesEnvelope] = await Promise.all([
+        const [health, blueprintEnvelope, filesEnvelope, learner] = await Promise.all([
           fetchRunnerHealth(controller.signal),
           fetchBlueprint(controller.signal),
-          fetchWorkspaceFiles(controller.signal)
+          fetchWorkspaceFiles(controller.signal),
+          fetchLearnerModel(controller.signal)
         ]);
 
         setRunnerHealth(health);
         setBlueprint(blueprintEnvelope.blueprint);
         setWorkspaceFiles(filesEnvelope.files);
+        setLearnerModel(learner);
         setLoadError("");
 
         const initialStep = blueprintEnvelope.blueprint.steps[0];
@@ -258,6 +283,60 @@ export default function App() {
     });
   }, [activeFilePath]);
 
+  useEffect(() => {
+    if (!activeStepId) {
+      setTaskProgress(null);
+      setTaskSession(null);
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const loadStepProgress = async () => {
+      try {
+        const progress = await fetchTaskProgress(activeStepId, controller.signal);
+
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        setTaskProgress(progress);
+        setTaskSession(progress.activeSession);
+        setTaskResult(progress.latestAttempt?.result ?? null);
+        setTaskError("");
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        if (runnerHealth?.status === "ready") {
+          setTaskError(
+            error instanceof Error ? error.message : `Failed to load progress for ${activeStepId}.`
+          );
+        }
+      }
+    };
+
+    void loadStepProgress();
+
+    return () => {
+      controller.abort();
+    };
+  }, [activeStepId, runnerHealth?.status]);
+
+  const resetTaskTelemetry = () => {
+    const emptyTelemetry = createEmptyTelemetry();
+    pendingPasteCharsRef.current = 0;
+    telemetryRef.current = emptyTelemetry;
+    setTaskTelemetry(emptyTelemetry);
+  };
+
+  const syncTelemetry = () => {
+    const nextTelemetry = normalizeTelemetryDraft(telemetryRef.current);
+    telemetryRef.current = nextTelemetry;
+    setTaskTelemetry(nextTelemetry);
+  };
+
   const openFile = async (filePath: string, step?: BlueprintStep | null) => {
     const requestId = ++activeRequestIdRef.current;
 
@@ -299,13 +378,15 @@ export default function App() {
     setSurfaceMode("brief");
     setGuideVisible(false);
     setRevealedHintLevel(0);
+    resetTaskTelemetry();
+    setTaskSession(null);
     setTaskResult((current) => (current?.stepId === step.id ? current : null));
     setTaskError("");
     setStatusMessage(`Opened brief for ${step.title}.`);
   };
 
   const handleApplyStep = async () => {
-    if (!activeStep) {
+    if (!activeStep || !blueprintPath) {
       return;
     }
 
@@ -320,6 +401,25 @@ export default function App() {
       activeRequestIdRef
     });
     setSurfaceMode("focus");
+    setGuideVisible(false);
+    setTaskError("");
+    resetTaskTelemetry();
+
+    try {
+      const started = await startBlueprintTask(blueprintPath, activeStep.id);
+      setTaskSession(started.session);
+      setTaskProgress(started.progress);
+      setLearnerModel(started.learnerModel);
+      setTaskResult(started.progress.latestAttempt?.result ?? null);
+      setStatusMessage(
+        `Focused ${activeStep.title}. ${formatCommitId(started.session.preTaskSnapshot.commitId)} is ready as the pre-task snapshot.`
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : `Failed to start ${activeStep.id}.`;
+      setTaskError(message);
+      setStatusMessage(message);
+    }
   };
 
   const handleFileClick = async (filePath: string) => {
@@ -366,12 +466,34 @@ export default function App() {
     setTaskError("");
 
     try {
-      const result = await executeBlueprintTask(blueprintPath, activeStep.id);
-      setTaskResult(result);
+      let session = taskSession;
+
+      if (!session || session.stepId !== activeStep.id || session.status !== "active") {
+        const started = await startBlueprintTask(blueprintPath, activeStep.id);
+        session = started.session;
+        setTaskSession(started.session);
+        setTaskProgress(started.progress);
+        setLearnerModel(started.learnerModel);
+      }
+
+      const submission = await submitBlueprintTask({
+        blueprintPath,
+        stepId: activeStep.id,
+        sessionId: session.sessionId,
+        telemetry: telemetryRef.current
+      });
+
+      setTaskSession(submission.session);
+      setTaskProgress(submission.progress);
+      setLearnerModel(submission.learnerModel);
+      setTaskResult(submission.attempt.result);
+      setGuideVisible(submission.attempt.status === "failed");
+      resetTaskTelemetry();
+      setRevealedHintLevel(0);
       setStatusMessage(
-        result.status === "passed"
-          ? `Passed ${activeStep.title}.`
-          : `Targeted tests failed for ${activeStep.title}.`
+        submission.attempt.status === "passed"
+          ? `Passed ${activeStep.title} on attempt ${submission.attempt.attempt}.`
+          : `Targeted tests failed for ${activeStep.title} on attempt ${submission.attempt.attempt}.`
       );
     } catch (error) {
       const message =
@@ -434,32 +556,36 @@ export default function App() {
         </aside>
 
         <section className="construct-stage">
-          <header className="construct-toolbar">
-            <div className="construct-toolbar-meta">
-              <span className="construct-toolbar-pill">{saveStateLabel}</span>
-              <span className="construct-toolbar-pill">
-                {runnerHealth?.status ?? "offline"}
-              </span>
-            </div>
-
-            <div className="construct-toolbar-center">
-              <span className="construct-toolbar-title">
-                {activeStep ? activeStep.title : blueprint?.name ?? "Construct"}
-              </span>
-            </div>
-
-            <div className="construct-toolbar-actions">
-              <button
-                type="button"
-                onClick={toggleTheme}
-                className="construct-theme-toggle"
-              >
-                {theme === "light" ? "Dark mode" : "Light mode"}
-              </button>
-            </div>
-          </header>
-
           <section className="construct-editor-shell">
+            <header className="construct-editor-chrome">
+              <div className="construct-editor-chrome-left">
+                <span className="construct-toolbar-pill">{saveStateLabel}</span>
+                <span className="construct-toolbar-pill">
+                  {runnerHealth?.status ?? "offline"}
+                </span>
+                <span className="construct-toolbar-pill">{taskAttemptLabel}</span>
+                <span className="construct-toolbar-pill">{snapshotLabel}</span>
+              </div>
+
+              <div className="construct-editor-chrome-center">
+                <div className="construct-toolbar-center">
+                  <span className="construct-toolbar-title">
+                    {activeStep ? activeStep.title : blueprint?.name ?? "Construct"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="construct-editor-chrome-right">
+                <button
+                  type="button"
+                  onClick={toggleTheme}
+                  className="construct-theme-toggle"
+                >
+                  {theme === "light" ? "Dark mode" : "Light mode"}
+                </button>
+              </div>
+            </header>
+
             {activeFilePath ? (
               <Editor
                 height="100%"
@@ -474,6 +600,59 @@ export default function App() {
                       decorationIdsRef.current = nextIds;
                     }
                   });
+
+                  const domNode = editor.getDomNode();
+                  const pasteTarget = domNode?.querySelector(".inputarea") ?? domNode;
+                  const handlePaste = (event: Event) => {
+                    const clipboardEvent = event as ClipboardEvent;
+                    const pastedText = clipboardEvent.clipboardData?.getData("text") ?? "";
+
+                    if (pastedText.length > 0) {
+                      pendingPasteCharsRef.current += pastedText.length;
+                    }
+                  };
+                  const changeDisposable = editor.onDidChangeModelContent((event) => {
+                    if (event.isFlush || event.isUndoing || event.isRedoing) {
+                      return;
+                    }
+
+                    let insertedCharacters = event.changes.reduce(
+                      (total, change) => total + change.text.length,
+                      0
+                    );
+
+                    if (insertedCharacters <= 0) {
+                      return;
+                    }
+
+                    if (pendingPasteCharsRef.current > 0) {
+                      const pastedCharacters = Math.min(
+                        pendingPasteCharsRef.current,
+                        insertedCharacters
+                      );
+                      telemetryRef.current = {
+                        ...telemetryRef.current,
+                        pastedChars: telemetryRef.current.pastedChars + pastedCharacters
+                      };
+                      pendingPasteCharsRef.current -= pastedCharacters;
+                      insertedCharacters -= pastedCharacters;
+                    }
+
+                    if (insertedCharacters > 0) {
+                      telemetryRef.current = {
+                        ...telemetryRef.current,
+                        typedChars: telemetryRef.current.typedChars + insertedCharacters
+                      };
+                    }
+
+                    syncTelemetry();
+                  });
+
+                  pasteTarget?.addEventListener("paste", handlePaste);
+                  editor.onDidDispose(() => {
+                    changeDisposable.dispose();
+                    pasteTarget?.removeEventListener("paste", handlePaste);
+                  });
                 }}
                 onChange={(value) => {
                   setEditorValue(value ?? "");
@@ -485,11 +664,11 @@ export default function App() {
                   minimap: { enabled: false },
                   scrollBeyondLastLine: false,
                   glyphMargin: true,
-                  lineNumbersMinChars: 3,
+                  lineNumbersMinChars: 4,
                   tabSize: 2,
                   padding: {
-                    top: 24,
-                    bottom: 24
+                    top: 140,
+                    bottom: 112
                   }
                 }}
               />
@@ -509,6 +688,9 @@ export default function App() {
               <span className="construct-status-item">
                 {activeStep ? `Step ${activeStepIndex + 1}` : "No step"}
               </span>
+              {loadError ? (
+                <span className="construct-status-item is-error">{loadError}</span>
+              ) : null}
             </div>
 
             {surfaceMode === "focus" && activeStep ? (
@@ -518,6 +700,7 @@ export default function App() {
                 blueprint={blueprint}
                 guidePrompts={guidePrompts}
                 guideVisible={guideVisible}
+                learnerModel={learnerModel}
                 onToggleGuide={() => {
                   setGuideVisible((current) => !current);
                 }}
@@ -532,20 +715,31 @@ export default function App() {
                   void handleApplyStep();
                 }}
                 onRevealHint={(level) => {
-                  setRevealedHintLevel((current) => Math.max(current, level));
+                  setRevealedHintLevel((current) => {
+                    if (level <= current) {
+                      return current;
+                    }
+
+                    telemetryRef.current = {
+                      ...telemetryRef.current,
+                      hintsUsed: telemetryRef.current.hintsUsed + (level - current)
+                    };
+                    syncTelemetry();
+
+                    return level;
+                  });
                 }}
                 revealedHintLevel={revealedHintLevel}
                 stepHints={stepHints}
+                taskProgress={activeTaskProgress}
                 taskRunState={taskRunState}
                 taskResult={activeTaskResult}
+                taskSession={taskSession}
                 taskError={taskError}
+                taskTelemetry={taskTelemetry}
               />
             ) : null}
           </section>
-
-          {loadError ? (
-            <div className="construct-inline-error">{loadError}</div>
-          ) : null}
         </section>
       </div>
 
@@ -581,6 +775,7 @@ function FloatingGuideCard({
   blueprint,
   guidePrompts,
   guideVisible,
+  learnerModel,
   onToggleGuide,
   onSubmitTask,
   onOpenBrief,
@@ -588,15 +783,19 @@ function FloatingGuideCard({
   onRevealHint,
   revealedHintLevel,
   stepHints,
+  taskProgress,
   taskRunState,
   taskResult,
-  taskError
+  taskSession,
+  taskError,
+  taskTelemetry
 }: {
   activeStep: BlueprintStep;
   activeStepIndex: number;
   blueprint: ProjectBlueprint | null;
   guidePrompts: string[];
   guideVisible: boolean;
+  learnerModel: LearnerModel | null;
   onToggleGuide: () => void;
   onSubmitTask: () => void;
   onOpenBrief: () => void;
@@ -604,9 +803,12 @@ function FloatingGuideCard({
   onRevealHint: (level: number) => void;
   revealedHintLevel: number;
   stepHints: string[];
+  taskProgress: TaskProgress | null;
   taskRunState: TaskRunState;
   taskResult: TaskResult | null;
+  taskSession: TaskSession | null;
   taskError: string;
+  taskTelemetry: TaskTelemetry;
 }) {
   return (
     <motion.aside
@@ -628,39 +830,71 @@ function FloatingGuideCard({
       </div>
 
       <div className="construct-floating-card-body">
+        <section className="construct-metadata-panel">
+          <span className="construct-panel-kicker">Telemetry</span>
+          <div className="construct-session-metrics">
+            <MetricPill
+              label="Attempts"
+              value={`${taskProgress?.totalAttempts ?? 0}`}
+            />
+            <MetricPill
+              label="Hints"
+              value={`${taskTelemetry.hintsUsed}`}
+            />
+            <MetricPill
+              label="Paste"
+              value={`${Math.round(taskTelemetry.pasteRatio * 100)}%`}
+            />
+            <MetricPill
+              label="Snapshot"
+              value={
+                taskSession ? formatCommitId(taskSession.preTaskSnapshot.commitId) : "pending"
+              }
+            />
+          </div>
+          <p className="construct-muted-copy">
+            Recorded hints across this step: {learnerModel?.hintsUsed[activeStep.id] ?? 0}
+          </p>
+        </section>
+
         <MetadataList title="Tests" values={activeStep.tests} />
         <MetadataList title="Constraints" values={activeStep.constraints} />
 
         <div className="construct-floating-card-actions">
-          <button
-            type="button"
-            onClick={onSubmitTask}
-            disabled={taskRunState === "running"}
-            className="construct-primary-button"
-          >
-            {taskRunState === "running" ? "Running tests..." : "Submit"}
-          </button>
-          <button
-            type="button"
-            onClick={onOpenBrief}
-            className="construct-secondary-button"
-          >
-            Open brief
-          </button>
-          <button
-            type="button"
-            onClick={onRefocus}
-            className="construct-secondary-button"
-          >
-            Refocus anchor
-          </button>
-          <button
-            type="button"
-            onClick={onToggleGuide}
-            className="construct-secondary-button"
-          >
-            {guideVisible ? "Hide guide" : "Ask guide"}
-          </button>
+          <div className="construct-action-cluster">
+            <button
+              type="button"
+              onClick={onSubmitTask}
+              disabled={taskRunState === "running"}
+              className="construct-primary-button"
+            >
+              {taskRunState === "running" ? "Running tests..." : "Submit"}
+            </button>
+            <button
+              type="button"
+              onClick={onOpenBrief}
+              className="construct-secondary-button"
+            >
+              Open brief
+            </button>
+          </div>
+
+          <div className="construct-action-cluster is-compact">
+            <button
+              type="button"
+              onClick={onRefocus}
+              className="construct-secondary-button"
+            >
+              Refocus anchor
+            </button>
+            <button
+              type="button"
+              onClick={onToggleGuide}
+              className="construct-secondary-button"
+            >
+              {guideVisible ? "Hide guide" : "Ask guide"}
+            </button>
+          </div>
         </div>
 
         <div className="construct-floating-hints">
@@ -1024,6 +1258,15 @@ function MetadataList({ title, values }: { title: string; values: string[] }) {
   );
 }
 
+function MetricPill({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="construct-session-metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
 function CheckCard({
   check,
   response,
@@ -1303,6 +1546,31 @@ function formatDuration(durationMs: number): string {
   }
 
   return `${(durationMs / 1000).toFixed(1)}s`;
+}
+
+function formatCommitId(commitId: string): string {
+  return commitId.slice(0, 7);
+}
+
+function createEmptyTelemetry(): TaskTelemetry {
+  return {
+    hintsUsed: 0,
+    pasteRatio: 0,
+    typedChars: 0,
+    pastedChars: 0
+  };
+}
+
+function normalizeTelemetryDraft(telemetry: TaskTelemetry): TaskTelemetry {
+  const totalCharacters = telemetry.typedChars + telemetry.pastedChars;
+
+  return {
+    ...telemetry,
+    pasteRatio:
+      totalCharacters > 0
+        ? Number((telemetry.pastedChars / totalCharacters).toFixed(4))
+        : 0
+  };
 }
 
 function getInitialTheme(): ThemeMode {

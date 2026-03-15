@@ -37,6 +37,66 @@ export type TaskResult = {
   stderr: string;
 };
 
+export type TaskTelemetry = {
+  hintsUsed: number;
+  pasteRatio: number;
+  typedChars: number;
+  pastedChars: number;
+};
+
+export type SnapshotRecord = {
+  commitId: string;
+  timestamp: string;
+  message: string;
+  fileDiffs: string[];
+};
+
+export type TaskSession = {
+  sessionId: string;
+  stepId: string;
+  blueprintPath: string;
+  status: "active" | "passed";
+  startedAt: string;
+  latestAttempt: number;
+  preTaskSnapshot: SnapshotRecord;
+};
+
+export type TaskAttempt = {
+  attempt: number;
+  sessionId: string;
+  stepId: string;
+  status: "failed" | "passed";
+  recordedAt: string;
+  timeSpentMs: number;
+  telemetry: TaskTelemetry;
+  result: TaskResult;
+  postTaskSnapshot?: SnapshotRecord;
+};
+
+export type TaskProgress = {
+  stepId: string;
+  totalAttempts: number;
+  activeSession: TaskSession | null;
+  latestAttempt: TaskAttempt | null;
+};
+
+export type LearnerHistoryEntry = {
+  stepId: string;
+  status: "started" | "failed" | "passed" | "needs-review";
+  attempt: number;
+  timeSpentMs: number;
+  hintsUsed: number;
+  pasteRatio: number;
+  recordedAt: string;
+};
+
+export type LearnerModel = {
+  skills: Record<string, number>;
+  history: LearnerHistoryEntry[];
+  hintsUsed: Record<string, number>;
+  reflections: Record<string, string>;
+};
+
 export type CheckOption = {
   id: string;
   label: string;
@@ -126,6 +186,19 @@ export type WorkspaceFilesEnvelope = {
 export type WorkspaceFileEnvelope = {
   path: string;
   content: string;
+};
+
+export type TaskStartResponse = {
+  session: TaskSession;
+  progress: TaskProgress;
+  learnerModel: LearnerModel;
+};
+
+export type TaskSubmitResponse = {
+  session: TaskSession;
+  attempt: TaskAttempt;
+  progress: TaskProgress;
+  learnerModel: LearnerModel;
 };
 
 export type TreeNode = {

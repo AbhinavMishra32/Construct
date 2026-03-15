@@ -7,6 +7,7 @@ This file tracks the implementation phases, current status, shipped scope, and v
 - Repository initialized from a single README-only commit.
 - Product name locked to `Construct`.
 - Workspace/tooling direction: `pnpm` + `Turborepo`.
+- Future agent stack direction is fixed: `LangGraph` orchestration with provider selection controlled by the development team, not by end users in the product UI.
 
 ## Phase Status
 
@@ -18,7 +19,7 @@ This file tracks the implementation phases, current status, shipped scope, and v
 | 3 | Test runner & adapters | Implemented | Adapter-based task execution now runs targeted Jest tests in child processes with timeouts, structured task results, and a runner endpoint for blueprint step execution. |
 | 4 | Editor UI basics & anchor navigation | Implemented | The Electron renderer now loads blueprint metadata, renders a Monaco editor and file tree, opens real workspace files, and jumps to `TASK:` anchors for selected steps. |
 | 5 | Learning Surface & Guidance Console | Implemented | Each unit now opens in a technical brief with quick checks, then transitions into a focused execution mode with a persistent guidance console, deterministic hints, and targeted task submission. |
-| 6 | Task lifecycle & telemetry | Pending | Not started. |
+| 6 | Task lifecycle & telemetry | Implemented | Pre-task snapshots, persisted task attempts, learner-model updates, telemetry submission, and renderer-side task lifecycle wiring are in place. |
 | 7 | Edit tracking & anti-cheat | Pending | Not started. |
 | 8 | Live Guide orchestration & LLM integration | Pending | Not started. |
 | 9 | Architect static generator | Pending | Not started. |
@@ -29,11 +30,11 @@ This file tracks the implementation phases, current status, shipped scope, and v
 
 ## Current Changeset Scope
 
-- Rework the renderer to match the production workspace direction: narrow file explorer, centered top bar, Monaco as the primary canvas, and a true floating guidance card.
-- Make the brief flow a full-screen overlay that covers the entire workspace, including the explorer and editor, before the user enters implementation mode.
-- Add light and dark theme support to the renderer and Monaco integration.
-- Keep the Phase 5 interaction model intact: quick checks, targeted task submission, guide prompts, and local hint levels.
-- Keep app-side helper tests and the Phase 5 verification path green after the UI refactor.
+- Implement the real Phase 6 task lifecycle in the runner: task start, pre-task snapshots, persisted attempts, learner history, and telemetry capture.
+- Wire the renderer to the lifecycle endpoints so focused work starts a task session, submits telemetry-backed attempts, and renders persisted progress.
+- Rework the workspace shell into an IDE surface: Monaco occupies the right canvas, the top chrome floats over the editor, the guide card floats in the lower-right corner, and the brief remains a full-screen overlay.
+- Tighten the renderer visual system so controls feel more tactile and native in both light and dark mode.
+- Preserve the local-only execution model. Future agent/provider work remains deferred to the LangGraph-based orchestration phase.
 
 ## Implemented So Far
 
@@ -55,6 +56,11 @@ This file tracks the implementation phases, current status, shipped scope, and v
 - Monaco setup: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/monaco.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/monaco.ts) and [`/Users/abhinavmishra/solin/socrates/app/vite.config.ts`](/Users/abhinavmishra/solin/socrates/app/vite.config.ts).
 - Phase 5 guide helpers: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/guide.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/guide.ts).
 - Phase 5 app tests: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/guide.test.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/guide.test.ts).
+- Phase 6 runner lifecycle: [`/Users/abhinavmishra/solin/socrates/runner/src/taskLifecycle.ts`](/Users/abhinavmishra/solin/socrates/runner/src/taskLifecycle.ts) and [`/Users/abhinavmishra/solin/socrates/runner/src/taskLifecycle.test.ts`](/Users/abhinavmishra/solin/socrates/runner/src/taskLifecycle.test.ts).
+- Phase 6 task endpoints: [`/Users/abhinavmishra/solin/socrates/runner/src/index.ts`](/Users/abhinavmishra/solin/socrates/runner/src/index.ts).
+- Phase 6 shared lifecycle schemas: [`/Users/abhinavmishra/solin/socrates/pkg/shared/src/schemas.ts`](/Users/abhinavmishra/solin/socrates/pkg/shared/src/schemas.ts).
+- Phase 6 renderer task APIs and types: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/api.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/api.ts) and [`/Users/abhinavmishra/solin/socrates/app/src/renderer/types.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/types.ts).
+- Phase 6 IDE shell and task experience: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/App.tsx`](/Users/abhinavmishra/solin/socrates/app/src/renderer/App.tsx) and [`/Users/abhinavmishra/solin/socrates/app/src/renderer/index.css`](/Users/abhinavmishra/solin/socrates/app/src/renderer/index.css).
 
 ## Verification
 
@@ -73,13 +79,21 @@ This file tracks the implementation phases, current status, shipped scope, and v
 - Passed: `pnpm verify:phase4`.
 - Passed: `pnpm --filter @construct/app test`.
 - Passed: `pnpm verify:phase5`.
+- Passed: `pnpm --filter @construct/app typecheck`.
+- Passed: `pnpm --filter @construct/app build`.
+- Passed: `pnpm --filter @construct/runner typecheck`.
+- Passed: `pnpm --filter @construct/runner test`.
+- Passed: `pnpm --filter @construct/runner task:test`.
+- Passed: `pnpm --filter @construct/shared typecheck`.
+- Passed: `pnpm --filter @construct/shared build`.
+- Passed: `pnpm --filter @construct/runner build`.
 - Not run in this sandbox: a bind-based smoke test for the HTTP endpoint, because local listen attempts from the test process hit `EPERM`.
 - Pending: `pnpm dev` smoke check for the Electron app and runner.
 
 ## Blockers
 
-- None for Phase 5 implementation.
+- None for Phase 6 implementation.
 
 ## Next Phase
 
-Phase 6 starts with the real task lifecycle: pre-task snapshots, persisted task results, attempt tracking, and local telemetry storage.
+Phase 7 starts with edit tracking and anti-cheat enforcement on top of the Phase 6 lifecycle.

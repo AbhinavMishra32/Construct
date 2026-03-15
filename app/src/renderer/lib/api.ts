@@ -1,7 +1,12 @@
 import type {
   BlueprintEnvelope,
+  LearnerModel,
   RunnerHealth,
+  TaskProgress,
   TaskResult,
+  TaskStartResponse,
+  TaskSubmitResponse,
+  TaskTelemetry,
   WorkspaceFileEnvelope,
   WorkspaceFilesEnvelope
 } from "../types";
@@ -70,6 +75,62 @@ export async function executeBlueprintTask(
   }
 
   return (await response.json()) as TaskResult;
+}
+
+export async function startBlueprintTask(
+  blueprintPath: string,
+  stepId: string
+): Promise<TaskStartResponse> {
+  const response = await fetch(`${RUNNER_BASE_URL}/tasks/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      blueprintPath,
+      stepId
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Runner responded with ${response.status} while starting ${stepId}.`);
+  }
+
+  return (await response.json()) as TaskStartResponse;
+}
+
+export async function submitBlueprintTask(input: {
+  blueprintPath: string;
+  stepId: string;
+  sessionId: string;
+  telemetry: TaskTelemetry;
+  timeoutMs?: number;
+}): Promise<TaskSubmitResponse> {
+  const response = await fetch(`${RUNNER_BASE_URL}/tasks/submit`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Runner responded with ${response.status} while submitting ${input.stepId}.`);
+  }
+
+  return (await response.json()) as TaskSubmitResponse;
+}
+
+export async function fetchTaskProgress(
+  stepId: string,
+  signal?: AbortSignal
+): Promise<TaskProgress> {
+  const encodedStepId = encodeURIComponent(stepId);
+  return getJson<TaskProgress>(`/tasks/progress?stepId=${encodedStepId}`, { signal });
+}
+
+export async function fetchLearnerModel(signal?: AbortSignal): Promise<LearnerModel> {
+  return getJson<LearnerModel>("/learner/model", { signal });
 }
 
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {

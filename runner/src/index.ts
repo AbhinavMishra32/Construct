@@ -2,9 +2,16 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { APP_NAME, BlueprintTaskRequestSchema } from "@construct/shared";
+import {
+  APP_NAME,
+  BlueprintTaskRequestSchema,
+  TaskStartRequestSchema,
+  TaskSubmitRequestSchema
+} from "@construct/shared";
 
 import { WorkspaceFileManager } from "./fileManager";
+import { SnapshotService } from "./snapshots";
+import { TaskLifecycleService } from "./taskLifecycle";
 import {
   BlueprintResolutionError,
   TestRunnerManager,
@@ -23,6 +30,11 @@ const defaultBlueprintPath = path.join(
 const workspaceRoot = path.dirname(defaultBlueprintPath);
 const workspaceFileManager = new WorkspaceFileManager(workspaceRoot, {
   ignoredDirectories: ["test-fixtures"]
+});
+const snapshotService = new SnapshotService(workspaceRoot);
+const taskLifecycle = new TaskLifecycleService(workspaceRoot, {
+  snapshotService,
+  testRunner
 });
 
 const server = http.createServer(async (request, response) => {
@@ -118,6 +130,41 @@ const server = http.createServer(async (request, response) => {
 
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify(taskResult));
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/tasks/start") {
+      const body = await readRequestBody(request);
+      const startRequest = TaskStartRequestSchema.parse(JSON.parse(body));
+      const taskSession = await taskLifecycle.startTask(startRequest);
+
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(taskSession));
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/tasks/submit") {
+      const body = await readRequestBody(request);
+      const submitRequest = TaskSubmitRequestSchema.parse(JSON.parse(body));
+      const taskSubmission = await taskLifecycle.submitTask(submitRequest);
+
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(taskSubmission));
+      return;
+    }
+
+    if (request.method === "GET" && request.url?.startsWith("/tasks/progress")) {
+      const stepId = getRequiredQueryParam(request.url, "stepId");
+      const progress = await taskLifecycle.getTaskProgress(stepId, defaultBlueprintPath);
+
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(progress));
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/learner/model") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(await taskLifecycle.getLearnerModel()));
       return;
     }
 

@@ -102,13 +102,13 @@ export const TaskExecutionRequestSchema = z.object({
   projectRoot: z.string().min(1),
   tests: z.array(z.string().min(1)).min(1),
   adapter: TestAdapterSchema.default("jest"),
-  timeoutMs: z.number().int().positive().max(120_000).default(15_000)
+  timeoutMs: z.number().int().positive().max(120_000).default(30_000)
 });
 
 export const BlueprintTaskRequestSchema = z.object({
   blueprintPath: z.string().min(1),
   stepId: z.string().min(1),
-  timeoutMs: z.number().int().positive().max(120_000).default(15_000)
+  timeoutMs: z.number().int().positive().max(120_000).default(30_000)
 });
 
 export const TaskResultSchema = z.object({
@@ -122,6 +122,13 @@ export const TaskResultSchema = z.object({
   timedOut: z.boolean().default(false),
   stdout: z.string().default(""),
   stderr: z.string().default("")
+});
+
+export const TaskTelemetrySchema = z.object({
+  hintsUsed: z.number().int().nonnegative().default(0),
+  pasteRatio: z.number().min(0).max(1).default(0),
+  typedChars: z.number().int().nonnegative().default(0),
+  pastedChars: z.number().int().nonnegative().default(0)
 });
 
 export const LearnerHistoryEntrySchema = z.object({
@@ -148,6 +155,68 @@ export const SnapshotSchema = z.object({
   fileDiffs: z.array(z.string().min(1)).default([])
 });
 
+export const TaskSessionStatusSchema = z.enum(["active", "passed"]);
+
+export const TaskSessionSchema = z.object({
+  sessionId: z.string().min(1),
+  stepId: z.string().min(1),
+  blueprintPath: z.string().min(1),
+  status: TaskSessionStatusSchema,
+  startedAt: z.string().datetime(),
+  latestAttempt: z.number().int().nonnegative().default(0),
+  preTaskSnapshot: SnapshotSchema
+});
+
+export const TaskAttemptSchema = z.object({
+  attempt: z.number().int().positive(),
+  sessionId: z.string().min(1),
+  stepId: z.string().min(1),
+  status: z.enum(["failed", "passed"]),
+  recordedAt: z.string().datetime(),
+  timeSpentMs: z.number().int().nonnegative(),
+  telemetry: TaskTelemetrySchema,
+  result: TaskResultSchema,
+  postTaskSnapshot: SnapshotSchema.optional()
+});
+
+export const TaskProgressSchema = z.object({
+  stepId: z.string().min(1),
+  totalAttempts: z.number().int().nonnegative(),
+  activeSession: TaskSessionSchema.nullable(),
+  latestAttempt: TaskAttemptSchema.nullable()
+});
+
+export const TaskStartRequestSchema = z.object({
+  blueprintPath: z.string().min(1),
+  stepId: z.string().min(1)
+});
+
+export const TaskStartResponseSchema = z.object({
+  session: TaskSessionSchema,
+  progress: TaskProgressSchema,
+  learnerModel: LearnerModelSchema
+});
+
+export const TaskSubmitRequestSchema = z.object({
+  blueprintPath: z.string().min(1),
+  stepId: z.string().min(1),
+  sessionId: z.string().min(1),
+  timeoutMs: z.number().int().positive().max(120_000).default(30_000),
+  telemetry: TaskTelemetrySchema.default({
+    hintsUsed: 0,
+    pasteRatio: 0,
+    typedChars: 0,
+    pastedChars: 0
+  })
+});
+
+export const TaskSubmitResponseSchema = z.object({
+  session: TaskSessionSchema,
+  attempt: TaskAttemptSchema,
+  progress: TaskProgressSchema,
+  learnerModel: LearnerModelSchema
+});
+
 export const PlanMutationSchema = z.object({
   id: z.string().min(1),
   reason: z.string().min(1),
@@ -166,6 +235,15 @@ export type TaskExecutionRequest = z.infer<typeof TaskExecutionRequestSchema>;
 export type BlueprintTaskRequest = z.infer<typeof BlueprintTaskRequestSchema>;
 export type TaskFailure = z.infer<typeof TaskFailureSchema>;
 export type TaskResult = z.infer<typeof TaskResultSchema>;
+export type TaskTelemetry = z.infer<typeof TaskTelemetrySchema>;
+export type LearnerHistoryEntry = z.infer<typeof LearnerHistoryEntrySchema>;
 export type LearnerModel = z.infer<typeof LearnerModelSchema>;
 export type SnapshotRecord = z.infer<typeof SnapshotSchema>;
+export type TaskSession = z.infer<typeof TaskSessionSchema>;
+export type TaskAttempt = z.infer<typeof TaskAttemptSchema>;
+export type TaskProgress = z.infer<typeof TaskProgressSchema>;
+export type TaskStartRequest = z.infer<typeof TaskStartRequestSchema>;
+export type TaskStartResponse = z.infer<typeof TaskStartResponseSchema>;
+export type TaskSubmitRequest = z.infer<typeof TaskSubmitRequestSchema>;
+export type TaskSubmitResponse = z.infer<typeof TaskSubmitResponseSchema>;
 export type PlanMutation = z.infer<typeof PlanMutationSchema>;
