@@ -32,7 +32,7 @@ export const ComprehensionCheckSchema = z.discriminatedUnion("type", [
   })
 ]);
 
-export const PlaybookStepSchema = z.object({
+export const BlueprintStepSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   summary: z.string().min(1),
@@ -63,7 +63,7 @@ export const DependencyGraphSchema = z.object({
   edges: z.array(DependencyEdgeSchema)
 });
 
-export const ProjectPlaybookSchema = z.object({
+export const ProjectBlueprintSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   version: z.string().min(1),
@@ -73,7 +73,7 @@ export const ProjectPlaybookSchema = z.object({
   language: z.string().min(1),
   entrypoints: z.array(z.string().min(1)).min(1),
   files: z.record(z.string().min(1)),
-  steps: z.array(PlaybookStepSchema).min(1),
+  steps: z.array(BlueprintStepSchema).min(1),
   dependencyGraph: DependencyGraphSchema,
   metadata: z.object({
     createdBy: z.string().min(1),
@@ -133,11 +133,10 @@ export const PlanMutationSchema = z.object({
 
 export type AnchorRef = z.infer<typeof AnchorSchema>;
 export type ComprehensionCheck = z.infer<typeof ComprehensionCheckSchema>;
-export type PlaybookStep = z.infer<typeof PlaybookStepSchema>;
-export type ProjectPlaybook = z.infer<typeof ProjectPlaybookSchema>;
+export type BlueprintStep = z.infer<typeof BlueprintStepSchema>;
+export type ProjectBlueprint = z.infer<typeof ProjectBlueprintSchema>;
 export type TaskFailure = z.infer<typeof TaskFailureSchema>;
 export type TaskResult = z.infer<typeof TaskResultSchema>;
 export type LearnerModel = z.infer<typeof LearnerModelSchema>;
 export type SnapshotRecord = z.infer<typeof SnapshotSchema>;
 export type PlanMutation = z.infer<typeof PlanMutationSchema>;
-

@@ -81,8 +81,8 @@ export default function App(): JSX.Element {
             </h1>
             <p className="max-w-3xl text-sm leading-7 text-slate-300">
               The desktop shell, runner process, shared schemas, and canonical
-              sample project are now wired into a single workspace. Phase 2 can
-              build on this foundation with file management and snapshots.
+              workflow blueprint are now wired into a single workspace. Phase 2
+              can build on this foundation with file management and snapshots.
             </p>
           </div>
         </header>
@@ -119,7 +119,7 @@ export default function App(): JSX.Element {
               </h2>
               <ul className="mt-4 space-y-3 text-sm text-slate-200">
                 <li>Phase 0: workspace scaffold, desktop shell, runner process</li>
-                <li>Phase 1: shared schemas, playbook metadata, sample runtime</li>
+                <li>Phase 1: shared schemas, blueprint metadata, workflow runtime</li>
                 <li>Phase 2 next: workspace file IO and internal git snapshots</li>
               </ul>
             </article>
@@ -152,4 +152,3 @@ export default function App(): JSX.Element {
     </main>
   );
 }
-

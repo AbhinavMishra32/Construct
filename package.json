@@ -8,8 +8,8 @@
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "validate:sample": "pnpm --filter @construct/shared validate:sample",
-    "verify:phase1": "pnpm validate:sample && pnpm --filter @construct/runner sample:test"
+    "validate:blueprint": "pnpm --filter @construct/shared validate:blueprint",
+    "verify:phase1": "pnpm validate:blueprint && pnpm --filter @construct/runner blueprint:test"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -18,4 +18,3 @@
     "typescript": "^5.8.2"
   }
 }
-

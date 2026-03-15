@@ -14,8 +14,8 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm validate:sample",
-    "validate:sample": "tsx ../../scripts/validate-sample-playbook.ts"
+    "test": "pnpm validate:blueprint",
+    "validate:blueprint": "node --import tsx ../../scripts/validate-blueprint.ts"
   },
   "dependencies": {
     "zod": "^3.24.2"
@@ -25,4 +25,3 @@
     "typescript": "^5.8.2"
   }
 }
-

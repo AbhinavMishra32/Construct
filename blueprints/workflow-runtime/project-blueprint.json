@@ -2,9 +2,9 @@
   "id": "construct.workflow-runtime.v1",
   "name": "Construct Workflow Runtime",
   "version": "1.0.0",
-  "description": "Build the workflow runtime that executes typed nodes and conditional edges in the Construct sample project.",
-  "projectRoot": "playbooks/sample",
-  "sourceProjectRoot": "playbooks/sample",
+  "description": "Build the workflow runtime that executes typed nodes and conditional edges in the Construct reference blueprint.",
+  "projectRoot": "blueprints/workflow-runtime",
+  "sourceProjectRoot": "blueprints/workflow-runtime",
   "language": "typescript",
   "entrypoints": ["src/index.ts"],
   "files": {
@@ -168,7 +168,6 @@
     "createdBy": "Construct Phase 1",
     "createdAt": "2025-03-15T00:00:00.000Z",
     "targetLanguage": "typescript",
-    "tags": ["construct", "workflow", "playbook"]
+    "tags": ["construct", "workflow", "blueprint"]
   }
 }
-

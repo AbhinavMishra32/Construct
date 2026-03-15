@@ -11,9 +11,9 @@ The repository currently includes:
 ## Workspace
 
 - `app`: Electron main, preload, and React renderer.
-- `runner`: local runner service and sample test harness.
+- `runner`: local runner service and blueprint test harness.
 - `pkg/shared`: shared schemas and types.
-- `playbooks/sample`: canonical sample project and initial playbook metadata.
+- `blueprints/workflow-runtime`: canonical workflow runtime and initial blueprint metadata.
 
 ## Commands
 
@@ -22,4 +22,3 @@ pnpm install
 pnpm dev
 pnpm verify:phase1
 ```
-
