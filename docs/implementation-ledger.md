@@ -21,7 +21,7 @@ This file tracks the implementation phases, current status, shipped scope, and v
 | 5 | Learning Surface & Guidance Console | Implemented | Each unit now opens in a technical brief with quick checks, then transitions into a focused execution mode with a persistent guidance console, deterministic hints, and targeted task submission. |
 | 6 | Task lifecycle & telemetry | Implemented | Pre-task snapshots, persisted task attempts, learner-model updates, telemetry submission, renderer-side task lifecycle wiring, and the compact native IDE shell pass are in place. |
 | 7 | Edit tracking & anti-cheat | Implemented | Typed-versus-pasted telemetry is enforced through a rewrite gate, and the learner now works inside a materialized starter workspace where internal step tests stay hidden from the explorer. |
-| 8 | Live Guide orchestration & LLM integration | In progress | Real agent foundations are now live: LangGraph job orchestration, the LangChain OpenAI provider, Tavily-backed research, SSE activity streaming, persisted user knowledge, prompt compaction for structured plan generation, runtime Guide responses, and first-slice generated blueprint synthesis. The runner now swaps onto the active agent-generated blueprint instead of only the fixed sample. Dynamic plan mutation after runtime struggle is still pending. |
+| 8 | Live Guide orchestration & LLM integration | In progress | Real agent foundations are now live: LangGraph job orchestration, the LangChain OpenAI provider, Tavily-backed research, SSE activity streaming, prompt compaction for structured plan generation, runtime Guide responses, first-slice generated blueprint synthesis, and agent persistence for planning state, learner knowledge, active blueprint metadata, and generated blueprint records. When `DATABASE_URL` is configured, those records are stored in Neon; otherwise Construct falls back to local state files. Dynamic plan mutation after runtime struggle is still pending. |
 | 9 | Architect static generator | Pending | Not started. |
 | 10 | Rollback UX & snapshot management | Pending | Not started. |
 | 11 | Multi-language adapters | Pending | Not started. |
@@ -40,6 +40,9 @@ This file tracks the implementation phases, current status, shipped scope, and v
 - Replace the fixed runtime sample as the always-active workspace by letting the runner resolve and materialize the latest generated blueprint on demand.
 - Remove the silent startup fallback to the fixed sample blueprint so the desktop app opens in planning mode until an agent-generated blueprint exists.
 - Persist a user knowledge base derived from prior planning sessions and feed it back into future question generation and roadmap synthesis.
+- Add an agent persistence boundary so planning sessions, learner knowledge, active generated-project selection, and generated blueprint records are stored as user data.
+- Use Neon as the remote backing store for that user data when `DATABASE_URL` is configured, while keeping the runnable local project workspace on disk.
+- Restore the saved planning goal from persisted state into the renderer instead of always falling back to the canned compiler example.
 - Replace static “Ask guide” behavior with a real runtime Guide request that analyzes the current anchored code, constraints, and latest task result.
 
 ## Implemented So Far
@@ -76,12 +79,15 @@ This file tracks the implementation phases, current status, shipped scope, and v
 - Phase 8 planner coverage: [`/Users/abhinavmishra/solin/socrates/runner/src/agentPlanner.test.ts`](/Users/abhinavmishra/solin/socrates/runner/src/agentPlanner.test.ts).
 - Phase 8 planning UI integration: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/App.tsx`](/Users/abhinavmishra/solin/socrates/app/src/renderer/App.tsx), [`/Users/abhinavmishra/solin/socrates/app/src/renderer/index.css`](/Users/abhinavmishra/solin/socrates/app/src/renderer/index.css), [`/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/api.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/api.ts), and [`/Users/abhinavmishra/solin/socrates/app/src/renderer/types.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/types.ts).
 - Phase 8 real agent orchestration: [`/Users/abhinavmishra/solin/socrates/runner/src/agentService.ts`](/Users/abhinavmishra/solin/socrates/runner/src/agentService.ts).
+- Phase 8 agent persistence layer with Neon/local backends: [`/Users/abhinavmishra/solin/socrates/runner/src/agentPersistence.ts`](/Users/abhinavmishra/solin/socrates/runner/src/agentPersistence.ts).
 - Phase 8 active-blueprint selection and runner workspace switching: [`/Users/abhinavmishra/solin/socrates/runner/src/activeBlueprint.ts`](/Users/abhinavmishra/solin/socrates/runner/src/activeBlueprint.ts) and [`/Users/abhinavmishra/solin/socrates/runner/src/index.ts`](/Users/abhinavmishra/solin/socrates/runner/src/index.ts).
 - Phase 8 generated blueprint regression coverage: [`/Users/abhinavmishra/solin/socrates/runner/src/agentService.test.ts`](/Users/abhinavmishra/solin/socrates/runner/src/agentService.test.ts).
 - Phase 8 real agent coverage: [`/Users/abhinavmishra/solin/socrates/runner/src/agentService.test.ts`](/Users/abhinavmishra/solin/socrates/runner/src/agentService.test.ts).
+- Phase 8 persistence regression coverage: [`/Users/abhinavmishra/solin/socrates/runner/src/agentPersistence.test.ts`](/Users/abhinavmishra/solin/socrates/runner/src/agentPersistence.test.ts).
 - Phase 8 runner job/SSE endpoints: [`/Users/abhinavmishra/solin/socrates/runner/src/index.ts`](/Users/abhinavmishra/solin/socrates/runner/src/index.ts).
 - Phase 8 shared job, knowledge-base, and runtime-guide contracts: [`/Users/abhinavmishra/solin/socrates/pkg/shared/src/agentSchemas.ts`](/Users/abhinavmishra/solin/socrates/pkg/shared/src/agentSchemas.ts).
 - Phase 8 renderer streaming integration and live Guide surface: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/App.tsx`](/Users/abhinavmishra/solin/socrates/app/src/renderer/App.tsx), [`/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/api.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/api.ts), [`/Users/abhinavmishra/solin/socrates/app/src/renderer/types.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/types.ts), and [`/Users/abhinavmishra/solin/socrates/app/src/renderer/index.css`](/Users/abhinavmishra/solin/socrates/app/src/renderer/index.css).
+- Phase 8 environment config for Neon-backed storage: [`/Users/abhinavmishra/solin/socrates/.env.example`](/Users/abhinavmishra/solin/socrates/.env.example).
 
 ## Verification
 
@@ -121,6 +127,7 @@ This file tracks the implementation phases, current status, shipped scope, and v
 - Passed: LangChain OpenAI provider migration verification through `pnpm install`, `PATH="$HOME/.nvm/versions/node/v25.4.0/bin:$PATH" pnpm --filter @construct/runner typecheck`, `PATH="$HOME/.nvm/versions/node/v25.4.0/bin:$PATH" pnpm --filter @construct/runner build`, and `PATH="$HOME/.nvm/versions/node/v25.4.0/bin:$PATH" pnpm --filter @construct/runner test`.
 - Passed: detailed agent logging verification through `PATH="$HOME/.nvm/versions/node/v25.4.0/bin:$PATH" pnpm --filter @construct/runner typecheck` and `PATH="$HOME/.nvm/versions/node/v25.4.0/bin:$PATH" pnpm --filter @construct/runner test`.
 - Passed: generated-blueprint activation verification through `PATH="$HOME/.nvm/versions/node/v25.4.0/bin:$PATH" pnpm --filter @construct/runner typecheck`, `PATH="$HOME/.nvm/versions/node/v25.4.0/bin:$PATH" pnpm --filter @construct/runner test`, `PATH="$HOME/.nvm/versions/node/v25.4.0/bin:$PATH" pnpm --filter @construct/runner build`, `pnpm --filter @construct/app typecheck`, and `pnpm --filter @construct/app build`.
+- Passed: agent persistence verification through `PATH="$HOME/.nvm/versions/node/v25.4.0/bin:$PATH" pnpm --filter @construct/runner test`, covering saved planning state, learner knowledge, active blueprint metadata, and generated blueprint record lookup through the new persistence boundary.
 - Passed: learner-workspace sanity check confirmed the visible explorer surface excludes `tests/` and the materialized [`/Users/abhinavmishra/solin/socrates/blueprints/workflow-runtime/.construct/workspaces/construct.workflow-runtime.v1/src/state.ts`](/Users/abhinavmishra/solin/socrates/blueprints/workflow-runtime/.construct/workspaces/construct.workflow-runtime.v1/src/state.ts) contains the starter `throw new Error('Implement mergeState')` implementation instead of the canonical solved code.
 - Note: the default shell runtime in this workspace still points at Node `v20.19.5`, so Phase 7 verification currently relies on switching to a newer local Node with `node:sqlite` support.
 - Not run in this sandbox: a bind-based smoke test for the HTTP endpoint, because local listen attempts from the test process hit `EPERM`.
@@ -131,6 +138,7 @@ This file tracks the implementation phases, current status, shipped scope, and v
 - Construct now emits a first-slice generated blueprint bundle for arbitrary goals, but the output quality still depends on a single Architect generation pass and does not yet include repair loops, schema retries for bundle content, or project execution smoke tests of the generated artifact before activation.
 - The current agent fix hardens structured plan generation by compacting learner/history/research context before asking for a schema-constrained roadmap, but we still need explicit retry/fallback handling when model output does not satisfy the schema on the first attempt.
 - The real agent stack requires `OPENAI_API_KEY` and `TAVILY_API_KEY` in the runner environment. Provider choice remains developer-controlled through environment configuration, not end-user UI.
+- Neon-backed persistence requires `DATABASE_URL` in the runner environment. The current implementation stores planning state, learner knowledge, active blueprint metadata, and generated blueprint records in Neon when configured, but still keeps runnable project files and task-lifecycle SQLite state local on disk because execution stays local-first.
 
 ## Next Phase
 

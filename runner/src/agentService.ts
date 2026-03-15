@@ -50,7 +50,15 @@ import {
 import { tavily } from "@tavily/core";
 import { z } from "zod";
 
-import { setActiveBlueprintPath } from "./activeBlueprint";
+import {
+  createAgentPersistence,
+  type AgentPersistence,
+  type PersistedGeneratedBlueprintRecord
+} from "./agentPersistence";
+import {
+  getActiveBlueprintPath as getActiveBlueprintPathFromFile,
+  setActiveBlueprintPath
+} from "./activeBlueprint";
 
 type PlanningStateFile = {
   session: PlanningSession | null;
@@ -99,6 +107,7 @@ type AgentDependencies = {
   llm?: StructuredLanguageModel;
   search?: SearchProvider;
   logger?: AgentLogger;
+  persistence?: AgentPersistence;
 };
 
 type AgentLogger = {
@@ -236,14 +245,16 @@ const CONFIDENCE_OPTIONS = [
 
 export class ConstructAgentService {
   private readonly rootDirectory: string;
-  private readonly statePath: string;
-  private readonly knowledgeBasePath: string;
   private readonly generatedPlansDirectory: string;
   private readonly generatedBlueprintsDirectory: string;
   private readonly now: () => Date;
-  private readonly llm: StructuredLanguageModel;
-  private readonly search: SearchProvider;
   private readonly logger: AgentLogger;
+  private readonly persistence: AgentPersistence;
+  private readonly llmOverride: StructuredLanguageModel | null;
+  private readonly searchOverride: SearchProvider | null;
+  private resolvedConfig: AgentConfig | null = null;
+  private llm: StructuredLanguageModel | null = null;
+  private search: SearchProvider | null = null;
   private readonly jobs = new Map<string, AgentJobRecord>();
 
   constructor(
@@ -251,13 +262,6 @@ export class ConstructAgentService {
     dependencies: AgentDependencies = {}
   ) {
     this.rootDirectory = rootDirectory;
-    this.statePath = path.join(rootDirectory, ".construct", "state", "agent-planner.json");
-    this.knowledgeBasePath = path.join(
-      rootDirectory,
-      ".construct",
-      "state",
-      "user-knowledge.json"
-    );
     this.generatedPlansDirectory = path.join(
       rootDirectory,
       ".construct",
@@ -270,11 +274,50 @@ export class ConstructAgentService {
     );
     this.now = dependencies.now ?? (() => new Date());
     this.logger = dependencies.logger ?? createConsoleAgentLogger();
+    this.persistence =
+      dependencies.persistence ??
+      createAgentPersistence({
+        rootDirectory,
+        logger: this.logger
+      });
+    this.llmOverride = dependencies.llm ?? null;
+    this.searchOverride = dependencies.search ?? null;
+  }
 
-    if (dependencies.llm) {
-      this.llm = dependencies.llm;
-    } else {
-      const config = resolveAgentConfig();
+  async getCurrentPlanningState(): Promise<PlanningStateFile> {
+    const state = await this.readPlanningState();
+    return CurrentPlanningSessionResponseSchema.parse(state);
+  }
+
+  async getActiveBlueprintPath(): Promise<string | null> {
+    const activeState = await this.persistence.getActiveBlueprintState();
+    const candidatePath = activeState?.blueprintPath?.trim();
+
+    if (candidatePath) {
+      const resolvedPath = path.resolve(candidatePath);
+
+      if (existsSync(resolvedPath)) {
+        return resolvedPath;
+      }
+
+      if (activeState?.sessionId) {
+        const restoredPath = await this.restoreGeneratedBlueprint(activeState.sessionId);
+        if (restoredPath) {
+          return restoredPath;
+        }
+      }
+    }
+
+    return getActiveBlueprintPathFromFile(this.rootDirectory);
+  }
+
+  private getLlm(): StructuredLanguageModel {
+    if (this.llmOverride) {
+      return this.llmOverride;
+    }
+
+    if (!this.llm) {
+      const config = this.getAgentConfig();
       this.llm = new OpenAIStructuredLanguageModel({
         apiKey: config.openAiApiKey,
         baseUrl: config.openAiBaseUrl,
@@ -283,10 +326,16 @@ export class ConstructAgentService {
       });
     }
 
-    if (dependencies.search) {
-      this.search = dependencies.search;
-    } else {
-      const config = resolveAgentConfig();
+    return this.llm;
+  }
+
+  private getSearch(): SearchProvider {
+    if (this.searchOverride) {
+      return this.searchOverride;
+    }
+
+    if (!this.search) {
+      const config = this.getAgentConfig();
       this.search = buildSearchProvider({
         provider: config.searchProvider,
         tavilyApiKey: config.tavilyApiKey,
@@ -294,11 +343,16 @@ export class ConstructAgentService {
         logger: this.logger
       });
     }
+
+    return this.search;
   }
 
-  async getCurrentPlanningState(): Promise<PlanningStateFile> {
-    const state = await this.readPlanningState();
-    return CurrentPlanningSessionResponseSchema.parse(state);
+  private getAgentConfig(): AgentConfig {
+    if (!this.resolvedConfig) {
+      this.resolvedConfig = resolveAgentConfig();
+    }
+
+    return this.resolvedConfig;
   }
 
   createPlanningQuestionsJob(
@@ -613,14 +667,14 @@ export class ConstructAgentService {
       }))
       .addNode("researchGoal", async (state) => ({
         research: await this.withStage(jobId, "research", "Researching the target project", "Fetching architecture and implementation references from Tavily.", async () => {
-          return this.search.research(
+          return this.getSearch().research(
             `Project architecture, implementation order, and prerequisites for: ${state.request.goal}`
           );
         })
       }))
       .addNode("generateQuestions", async (state) => ({
         session: await this.withStage(jobId, "question-generation", "Generating targeted knowledge questions", "OpenAI is turning the goal and stored knowledge into concept-level intake questions.", async () => {
-          const questionDraft = await this.llm.parse({
+          const questionDraft = await this.getLlm().parse({
             schema: PLANNING_QUESTION_DRAFT_SCHEMA,
             schemaName: "construct_planning_question_draft",
             instructions: buildQuestionGenerationInstructions(),
@@ -695,14 +749,14 @@ export class ConstructAgentService {
       }))
       .addNode("researchArchitecture", async (state) => ({
         research: await this.withStage(jobId, "research", "Researching architecture and build order", "Fetching reference material for the requested system shape and likely dependency order.", async () => {
-          return this.search.research(
+          return this.getSearch().research(
             `${state.session.goal} architecture, dependency order, core modules, implementation sequence`
           );
         })
       }))
       .addNode("generatePlan", async (state) => ({
         plan: await this.withStage(jobId, "plan-generation", "Synthesizing the personalized roadmap", "OpenAI is merging the project dependencies, learner profile, and research into a detailed build path.", async () => {
-          const planDraft = await this.llm.parse({
+          const planDraft = await this.getLlm().parse({
             schema: GENERATED_PROJECT_PLAN_DRAFT_SCHEMA,
             schemaName: "construct_generated_project_plan",
             instructions: buildPlanGenerationInstructions(),
@@ -737,7 +791,7 @@ export class ConstructAgentService {
             throw new Error("Cannot generate a blueprint before the project plan exists.");
           }
 
-          const bundleDraft = await this.llm.parse({
+          const bundleDraft = await this.getLlm().parse({
             schema: GENERATED_BLUEPRINT_BUNDLE_DRAFT_SCHEMA,
             schemaName: "construct_generated_blueprint_bundle",
             instructions: buildBlueprintGenerationInstructions(),
@@ -801,7 +855,7 @@ export class ConstructAgentService {
       }))
       .addNode("generateGuidance", async (state) => ({
         guide: await this.withStage(jobId, "runtime-guide", "Analyzing the current implementation", "OpenAI is reviewing the anchored code, constraints, and latest test result to prepare Socratic guidance.", async () => {
-          return this.llm.parse({
+          return this.getLlm().parse({
             schema: RuntimeGuideResponseSchema,
             schemaName: "construct_runtime_guide",
             instructions: buildRuntimeGuideInstructions(),
@@ -971,8 +1025,27 @@ export class ConstructAgentService {
         ]))
       }
     });
+    const timestamp = this.now().toISOString();
 
     await writeFile(blueprintPath, `${JSON.stringify(blueprint, null, 2)}\n`, "utf8");
+    await this.persistence.saveGeneratedBlueprintRecord({
+      sessionId: session.sessionId,
+      goal: session.goal,
+      blueprintId: blueprint.id,
+      blueprintPath,
+      projectRoot,
+      blueprintJson: JSON.stringify(blueprint),
+      planJson: JSON.stringify(plan),
+      bundleJson: JSON.stringify(draft),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      isActive: true
+    });
+    await this.persistence.setActiveBlueprintState({
+      blueprintPath,
+      sessionId: session.sessionId,
+      updatedAt: timestamp
+    });
     await setActiveBlueprintPath({
       rootDirectory: this.rootDirectory,
       blueprintPath,
@@ -1021,29 +1094,22 @@ export class ConstructAgentService {
   }
 
   private async readPlanningState(): Promise<PlanningStateFile> {
-    if (!existsSync(this.statePath)) {
-      return {
+    return (
+      (await this.persistence.getPlanningState()) ?? {
         session: null,
         plan: null
-      };
-    }
-
-    const rawState = await readFile(this.statePath, "utf8");
-    return CurrentPlanningSessionResponseSchema.parse(JSON.parse(rawState));
+      }
+    );
   }
 
   private async writePlanningState(state: PlanningStateFile): Promise<void> {
-    await mkdir(path.dirname(this.statePath), { recursive: true });
-    await writeFile(this.statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+    await this.persistence.setPlanningState(
+      CurrentPlanningSessionResponseSchema.parse(state)
+    );
   }
 
   private async readKnowledgeBase(): Promise<UserKnowledgeBase> {
-    if (!existsSync(this.knowledgeBasePath)) {
-      return emptyKnowledgeBase(this.now);
-    }
-
-    const rawState = await readFile(this.knowledgeBasePath, "utf8");
-    return UserKnowledgeBaseSchema.parse(JSON.parse(rawState));
+    return (await this.persistence.getKnowledgeBase()) ?? emptyKnowledgeBase(this.now);
   }
 
   private async mergeKnowledgeBase(
@@ -1080,18 +1146,74 @@ export class ConstructAgentService {
       goals: goals.slice(0, 25)
     });
 
-    await mkdir(path.dirname(this.knowledgeBasePath), { recursive: true });
-    await writeFile(
-      this.knowledgeBasePath,
-      `${JSON.stringify(nextKnowledgeBase, null, 2)}\n`,
-      "utf8"
-    );
+    await this.persistence.setKnowledgeBase(nextKnowledgeBase);
     this.logger.info("Merged planning signals into learner knowledge base.", {
       sessionId: session.sessionId,
       goal: session.goal,
       conceptCount: nextKnowledgeBase.concepts.length,
       goalCount: nextKnowledgeBase.goals.length
     });
+  }
+
+  private async restoreGeneratedBlueprint(sessionId: string): Promise<string | null> {
+    const record = await this.persistence.getGeneratedBlueprintRecord(sessionId);
+
+    if (!record) {
+      return null;
+    }
+
+    const restoredPath = await this.materializePersistedBlueprint(record);
+    const updatedAt = this.now().toISOString();
+
+    await this.persistence.setActiveBlueprintState({
+      blueprintPath: restoredPath,
+      sessionId,
+      updatedAt
+    });
+    await setActiveBlueprintPath({
+      rootDirectory: this.rootDirectory,
+      blueprintPath: restoredPath,
+      sessionId,
+      now: this.now
+    });
+
+    this.logger.info("Restored active blueprint from persisted record.", {
+      sessionId,
+      blueprintPath: restoredPath
+    });
+
+    return restoredPath;
+  }
+
+  private async materializePersistedBlueprint(
+    record: PersistedGeneratedBlueprintRecord
+  ): Promise<string> {
+    const bundle = GENERATED_BLUEPRINT_BUNDLE_DRAFT_SCHEMA.parse(
+      JSON.parse(record.bundleJson)
+    );
+    const blueprint = ProjectBlueprintSchema.parse(JSON.parse(record.blueprintJson));
+    const projectRoot = record.projectRoot;
+    const blueprintPath = path.join(projectRoot, "project-blueprint.json");
+
+    await rm(projectRoot, { recursive: true, force: true });
+    await mkdir(projectRoot, { recursive: true });
+    await this.writeProjectFiles(projectRoot, bundle.supportFiles);
+    await this.writeProjectFiles(projectRoot, bundle.canonicalFiles);
+    await this.writeProjectFiles(projectRoot, bundle.hiddenTests);
+
+    const nextBlueprint = ProjectBlueprintSchema.parse({
+      ...blueprint,
+      projectRoot,
+      sourceProjectRoot: projectRoot
+    });
+
+    await writeFile(
+      blueprintPath,
+      `${JSON.stringify(nextBlueprint, null, 2)}\n`,
+      "utf8"
+    );
+
+    return blueprintPath;
   }
 }
 

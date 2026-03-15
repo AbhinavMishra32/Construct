@@ -23,10 +23,7 @@ import {
   TestRunnerManager,
   loadBlueprint
 } from "./testRunner";
-import {
-  getActiveBlueprintPath,
-  getDefaultBlueprintPath
-} from "./activeBlueprint";
+import { getDefaultBlueprintPath } from "./activeBlueprint";
 import { prepareLearnerWorkspace } from "./workspaceMaterializer";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -56,7 +53,7 @@ type WorkspaceContext = {
 };
 
 async function getWorkspaceContext(): Promise<WorkspaceContext | null> {
-  const canonicalBlueprintPath = await getActiveBlueprintPath(rootDir);
+  const canonicalBlueprintPath = await getConstructAgent().getActiveBlueprintPath();
 
   if (!canonicalBlueprintPath) {
     workspaceContextPromise = null;
@@ -125,7 +122,7 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && request.url === "/agent/planning/current") {
       response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify(await agentPlanner.getCurrentPlanningState()));
+      response.end(JSON.stringify(await getConstructAgent().getCurrentPlanningState()));
       return;
     }
 

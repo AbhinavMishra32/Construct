@@ -334,6 +334,7 @@ test("ConstructAgentService creates question and plan jobs and persists the resu
       await readFile(path.join(root, ".construct", "state", "active-blueprint.json"), "utf8")
     ) as { blueprintPath: string };
     assert.equal(activeBlueprintState.blueprintPath, generatedBlueprintPath);
+    assert.equal(await service.getActiveBlueprintPath(), generatedBlueprintPath);
 
     const knowledgeBaseRaw = await readFile(
       path.join(root, ".construct", "state", "user-knowledge.json"),
@@ -346,6 +347,13 @@ test("ConstructAgentService creates question and plan jobs and persists the resu
 
     assert.ok(knowledgeBase.concepts.some((concept) => concept.id === "rust.ownership"));
     assert.equal(knowledgeBase.goals[0]?.goal, "build a C compiler in Rust");
+
+    const resumedService = new ConstructAgentService(root, {
+      now: () => new Date("2026-03-15T00:00:00.000Z")
+    });
+    const resumedState = await resumedService.getCurrentPlanningState();
+    assert.equal(resumedState.session?.goal, "build a C compiler in Rust");
+    assert.equal(await resumedService.getActiveBlueprintPath(), generatedBlueprintPath);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

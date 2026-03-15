@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsup src/index.ts src/testRunner.ts src/fileManager.ts src/snapshots.ts --format esm --clean",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test --test-concurrency=1 src/activeBlueprint.test.ts src/agentPlanner.test.ts src/agentService.test.ts src/fileManager.test.ts src/snapshots.test.ts src/testRunner.test.ts src/taskLifecycle.test.ts src/workspaceMaterializer.test.ts",
+    "test": "node --import tsx --test --test-concurrency=1 src/activeBlueprint.test.ts src/agentPersistence.test.ts src/agentPlanner.test.ts src/agentService.test.ts src/fileManager.test.ts src/snapshots.test.ts src/testRunner.test.ts src/taskLifecycle.test.ts src/workspaceMaterializer.test.ts",
     "blueprint:test": "node --import tsx src/testRunner.ts --all",
     "task:test": "node --import tsx src/testRunner.ts --step step.state-merge"
   },
@@ -16,6 +16,7 @@
     "@langchain/core": "^1.1.32",
     "@langchain/langgraph": "^1.2.2",
     "@langchain/openai": "^1.0.7",
+    "@neondatabase/serverless": "^1.0.1",
     "@tavily/core": "^0.7.2",
     "zod": "^3.25.76"
   },

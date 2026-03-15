@@ -214,6 +214,9 @@ export default function App() {
         setRunnerHealth(health);
         setPlanningSession(planningState.session);
         setPlanningPlan(planningState.plan);
+        if (planningState.session?.goal) {
+          setPlanningGoal(planningState.session.goal);
+        }
         setLoadError("");
 
         if (!blueprintEnvelope.blueprint) {
