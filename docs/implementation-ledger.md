@@ -17,7 +17,7 @@ This file tracks the implementation phases, current status, shipped scope, and v
 | 2 | File manager & snapshotting | Implemented | Workspace-scoped file IO and a separate internal git snapshot store now exist in the runner, with restore coverage for edits, creations, and deletions. |
 | 3 | Test runner & adapters | Implemented | Adapter-based task execution now runs targeted Jest tests in child processes with timeouts, structured task results, and a runner endpoint for blueprint step execution. |
 | 4 | Editor UI basics & anchor navigation | Implemented | The Electron renderer now loads blueprint metadata, renders a Monaco editor and file tree, opens real workspace files, and jumps to `TASK:` anchors for selected steps. |
-| 5 | Learning Surface & Tutor Card | Pending | Not started. |
+| 5 | Learning Surface & Guidance Console | Implemented | Each unit now opens in a technical brief with quick checks, then transitions into a focused execution mode with a persistent guidance console, deterministic hints, and targeted task submission. |
 | 6 | Task lifecycle & telemetry | Pending | Not started. |
 | 7 | Edit tracking & anti-cheat | Pending | Not started. |
 | 8 | Live Guide orchestration & LLM integration | Pending | Not started. |
@@ -29,11 +29,11 @@ This file tracks the implementation phases, current status, shipped scope, and v
 
 ## Current Changeset Scope
 
-- Add runner endpoints for loading the active blueprint and reading or writing workspace files.
-- Add real `TASK:` anchor comments to the canonical workflow blueprint source files.
-- Add the Phase 4 Monaco-based editor shell with autosave, file tree navigation, and focused step selection.
-- Add client-side anchor detection and editor highlighting for selected blueprint steps.
-- Add a root verification command for the Phase 4 baseline.
+- Rework the renderer into a two-stage flow: technical brief first, focused coding second.
+- Add quick comprehension checks with deterministic local review for MCQ and short-answer prompts.
+- Add a persistent Guidance Console with `Apply to workspace`, targeted test submission, guide prompts, and three local hint levels.
+- Add execution output rendering in the editor surface for targeted unit test runs.
+- Add app-side helper tests and a root verification command for the Phase 5 baseline.
 
 ## Implemented So Far
 
@@ -53,6 +53,8 @@ This file tracks the implementation phases, current status, shipped scope, and v
 - App shell: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/App.tsx`](/Users/abhinavmishra/solin/socrates/app/src/renderer/App.tsx).
 - Renderer integration helpers: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/api.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/api.ts), [`/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/tree.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/tree.ts), and [`/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/anchors.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/anchors.ts).
 - Monaco setup: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/monaco.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/monaco.ts) and [`/Users/abhinavmishra/solin/socrates/app/vite.config.ts`](/Users/abhinavmishra/solin/socrates/app/vite.config.ts).
+- Phase 5 guide helpers: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/guide.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/guide.ts).
+- Phase 5 app tests: [`/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/guide.test.ts`](/Users/abhinavmishra/solin/socrates/app/src/renderer/lib/guide.test.ts).
 
 ## Verification
 
@@ -69,13 +71,15 @@ This file tracks the implementation phases, current status, shipped scope, and v
 - Passed: `pnpm --filter @construct/app typecheck`.
 - Passed: `pnpm --filter @construct/app build`.
 - Passed: `pnpm verify:phase4`.
+- Passed: `pnpm --filter @construct/app test`.
+- Passed: `pnpm verify:phase5`.
 - Not run in this sandbox: a bind-based smoke test for the HTTP endpoint, because local listen attempts from the test process hit `EPERM`.
 - Pending: `pnpm dev` smoke check for the Electron app and runner.
 
 ## Blockers
 
-- None for Phase 4 implementation.
+- None for Phase 5 implementation.
 
 ## Next Phase
 
-Phase 5 starts with the Learning Surface, persistent right-side guidance card, and the transition from explanation mode into coding mode.
+Phase 6 starts with the real task lifecycle: pre-task snapshots, persisted task results, attempt tracking, and local telemetry storage.

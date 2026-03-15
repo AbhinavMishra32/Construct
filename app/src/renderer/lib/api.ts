@@ -1,6 +1,7 @@
 import type {
   BlueprintEnvelope,
   RunnerHealth,
+  TaskResult,
   WorkspaceFileEnvelope,
   WorkspaceFilesEnvelope
 } from "../types";
@@ -49,6 +50,28 @@ export async function saveWorkspaceFile(
   }
 }
 
+export async function executeBlueprintTask(
+  blueprintPath: string,
+  stepId: string
+): Promise<TaskResult> {
+  const response = await fetch(`${RUNNER_BASE_URL}/tasks/execute`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      blueprintPath,
+      stepId
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Runner responded with ${response.status} while executing ${stepId}.`);
+  }
+
+  return (await response.json()) as TaskResult;
+}
+
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${RUNNER_BASE_URL}${path}`, init);
 
@@ -58,4 +81,3 @@ async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
 
   return (await response.json()) as T;
 }
-

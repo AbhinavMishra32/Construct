@@ -13,7 +13,7 @@
     "build:main": "tsup",
     "build:renderer": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node -e \"console.log('App tests are not implemented yet.')\""
+    "test": "node --import tsx --test src/renderer/lib/guide.test.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -33,6 +33,7 @@
     "electron": "^35.0.1",
     "postcss": "^8.5.3",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
     "tsup": "^8.4.0",
     "typescript": "^5.8.2",
     "vite": "^6.2.2",

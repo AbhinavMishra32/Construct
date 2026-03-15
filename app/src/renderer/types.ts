@@ -18,6 +18,25 @@ export type WorkspaceFileEntry = {
   size: number;
 };
 
+export type TaskFailure = {
+  testName: string;
+  message: string;
+  stackTrace?: string;
+};
+
+export type TaskResult = {
+  stepId: string;
+  status: "passed" | "failed";
+  adapter: "jest" | "cargo" | "pytest";
+  durationMs: number;
+  testsRun: string[];
+  failures: TaskFailure[];
+  exitCode: number | null;
+  timedOut: boolean;
+  stdout: string;
+  stderr: string;
+};
+
 export type CheckOption = {
   id: string;
   label: string;
@@ -123,4 +142,3 @@ export type AnchorLocation = {
   startColumn: number;
   endColumn: number;
 };
-
