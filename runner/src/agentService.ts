@@ -467,6 +467,10 @@ export class ConstructAgentService {
     const send = (eventName: string, payload: unknown) => {
       response.write(`event: ${eventName}\n`);
       response.write(`data: ${JSON.stringify(payload)}\n\n`);
+
+      if (eventName === "agent-end") {
+        response.end();
+      }
     };
 
     send("agent-state", this.getJob(jobId));

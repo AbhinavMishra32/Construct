@@ -198,6 +198,23 @@ async function runAgentJob<T>(
     const stream = new EventSource(`${RUNNER_BASE_URL}${created.streamPath}`);
     let settled = false;
 
+    const settleFromSnapshot = (snapshot: AgentJobSnapshot) => {
+      if (settled) {
+        return;
+      }
+
+      if (snapshot.status === "completed") {
+        settled = true;
+        stream.close();
+        resolve(snapshot.result as T);
+        return;
+      }
+
+      if (snapshot.status === "failed") {
+        fail(new Error(snapshot.error ?? "Agent job failed."));
+      }
+    };
+
     const fail = (error: Error) => {
       if (settled) {
         return;
@@ -220,6 +237,20 @@ async function runAgentJob<T>(
       }
     });
 
+    stream.addEventListener("agent-state", (event) => {
+      try {
+        settleFromSnapshot(
+          JSON.parse((event as MessageEvent).data) as AgentJobSnapshot
+        );
+      } catch (error) {
+        fail(
+          error instanceof Error
+            ? error
+            : new Error("Failed to parse agent state stream.")
+        );
+      }
+    });
+
     stream.addEventListener("agent-complete", (event) => {
       if (settled) {
         return;
@@ -235,6 +266,22 @@ async function runAgentJob<T>(
       fail(new Error(data.error ?? "Agent job failed."));
     });
 
+    stream.addEventListener("agent-end", () => {
+      if (settled) {
+        return;
+      }
+
+      void recoverAgentJob(created)
+        .then(settleFromSnapshot)
+        .catch((error) => {
+          fail(
+            error instanceof Error
+              ? error
+              : new Error("Agent stream ended before completion.")
+          );
+        });
+    });
+
     stream.onerror = () => {
       if (settled) {
         return;
@@ -242,14 +289,11 @@ async function runAgentJob<T>(
 
       void recoverAgentJob(created)
         .then((snapshot) => {
-          if (snapshot.status === "completed") {
-            settled = true;
-            stream.close();
-            resolve(snapshot.result as T);
-            return;
-          }
+          settleFromSnapshot(snapshot);
 
-          fail(new Error(snapshot.error ?? "Agent stream disconnected before completion."));
+          if (!settled) {
+            fail(new Error(snapshot.error ?? "Agent stream disconnected before completion."));
+          }
         })
         .catch((error) => {
           fail(
