@@ -49,13 +49,15 @@ test("AgentPlannerService generates different first steps for concept-first and 
 
     const answers = conceptFirstSession.session.questions.map((question) => ({
       questionId: question.id,
-      value:
+      answerType: "option" as const,
+      optionId:
         question.conceptId === "rust.structs" || question.conceptId === "rust.enums"
           ? "comfortable"
           : "new"
     })) as Array<{
       questionId: string;
-      value: "comfortable" | "shaky" | "new";
+      answerType: "option";
+      optionId: "comfortable" | "shaky" | "new";
     }>;
 
     const conceptFirstPlan = await conceptFirstPlanner.completePlanningSession({

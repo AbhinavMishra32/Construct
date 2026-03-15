@@ -52,19 +52,19 @@ const CONFIDENCE_OPTIONS = [
     id: "comfortable",
     label: "Comfortable",
     description: "I can use this without much support.",
-    value: "comfortable" as const
+    confidenceSignal: "comfortable" as const
   },
   {
     id: "shaky",
     label: "Shaky",
     description: "I know the shape of it, but I still need help.",
-    value: "shaky" as const
+    confidenceSignal: "shaky" as const
   },
   {
     id: "new",
     label: "New",
     description: "I would need this taught from first principles.",
-    value: "new" as const
+    confidenceSignal: "new" as const
   }
 ] as const;
 
@@ -276,7 +276,7 @@ export class AgentPlannerService {
       throw new Error(`Unknown planning session ${request.sessionId}.`);
     }
 
-    const answerMap = new Map(request.answers.map((answer) => [answer.questionId, answer.value]));
+    const answerMap = new Map(request.answers.map((answer) => [answer.questionId, answer]));
 
     for (const question of state.session.questions) {
       if (!answerMap.has(question.id)) {
@@ -399,7 +399,7 @@ function generateProjectPlan(
   session: PlanningSession,
   answers: PlanningAnswer[]
 ): GeneratedProjectPlan {
-  const answerMap = new Map(answers.map((answer) => [answer.questionId, answer.value]));
+  const answerMap = new Map(answers.map((answer) => [answer.questionId, answer]));
   const knowledgeGraph = buildKnowledgeGraph(session.questions, answerMap);
   const componentTemplates = COMPONENT_TEMPLATES[session.detectedDomain] ?? COMPONENT_TEMPLATES.generic;
   const architecture = buildArchitecture(componentTemplates, knowledgeGraph);
@@ -421,14 +421,15 @@ function generateProjectPlan(
 
 function buildKnowledgeGraph(
   questions: PlanningQuestion[],
-  answerMap: Map<string, ConceptConfidence>
+  answerMap: Map<string, PlanningAnswer>
 ): { concepts: ConceptNode[]; strengths: string[]; gaps: string[] } {
   const concepts = questions.map((question) => {
     const conceptMeta = CONCEPT_LIBRARY[question.conceptId] ?? {
       label: question.conceptId,
       category: question.category
     };
-    const confidence = answerMap.get(question.id) ?? "new";
+    const answer = answerMap.get(question.id);
+    const confidence = inferPlanningAnswerConfidence(question, answer);
 
     return {
       id: question.conceptId,
@@ -453,6 +454,41 @@ function buildKnowledgeGraph(
       .filter((concept) => concept.confidence !== "comfortable")
       .map((concept) => concept.label)
   };
+}
+
+function inferPlanningAnswerConfidence(
+  question: PlanningQuestion,
+  answer: PlanningAnswer | undefined
+): ConceptConfidence {
+  if (!answer) {
+    return "new";
+  }
+
+  if (answer.answerType === "option") {
+    return question.options.find((option) => option.id === answer.optionId)?.confidenceSignal ?? "new";
+  }
+
+  const normalized = answer.customResponse.toLowerCase();
+
+  if (
+    normalized.includes("comfortable") ||
+    normalized.includes("confident") ||
+    normalized.includes("daily") ||
+    normalized.includes("strong")
+  ) {
+    return "comfortable";
+  }
+
+  if (
+    normalized.includes("new") ||
+    normalized.includes("never") ||
+    normalized.includes("beginner") ||
+    normalized.includes("from scratch")
+  ) {
+    return "new";
+  }
+
+  return "shaky";
 }
 
 function buildArchitecture(

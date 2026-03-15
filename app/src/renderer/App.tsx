@@ -32,10 +32,10 @@ import type {
   AnchorLocation,
   BlueprintStep,
   ComprehensionCheck,
-  ConceptConfidence,
   GeneratedProjectPlan,
   LearningStyle,
   LearnerModel,
+  PlanningAnswer,
   PlanningSession,
   ProjectBlueprint,
   RewriteGate,
@@ -61,9 +61,28 @@ declare global {
 type SurfaceMode = "brief" | "focus";
 type ThemeMode = "light" | "dark";
 type TaskRunState = "idle" | "running";
+type PlanningAnswerDraft =
+  | {
+      answerType: "option";
+      optionId: string;
+    }
+  | {
+      answerType: "custom";
+      customResponse: string;
+    };
 
 const runtimeInfo = window.construct.getRuntimeInfo();
 const SAVE_DEBOUNCE_MS = 450;
+
+function hasPlanningAnswer(answer: PlanningAnswerDraft | undefined): answer is PlanningAnswerDraft {
+  if (!answer) {
+    return false;
+  }
+
+  return answer.answerType === "option"
+    ? Boolean(answer.optionId)
+    : answer.customResponse.trim().length > 0;
+}
 
 export default function App() {
   const [runnerHealth, setRunnerHealth] = useState<RunnerHealth | null>(null);
@@ -87,7 +106,7 @@ export default function App() {
   const [planningGoal, setPlanningGoal] = useState("");
   const [planningLearningStyle, setPlanningLearningStyle] =
     useState<LearningStyle>("concept-first");
-  const [planningAnswers, setPlanningAnswers] = useState<Record<string, ConceptConfidence>>({});
+  const [planningAnswers, setPlanningAnswers] = useState<Record<string, PlanningAnswerDraft>>({});
   const [planningBusy, setPlanningBusy] = useState(false);
   const [planningError, setPlanningError] = useState("");
   const [filterQuery, setFilterQuery] = useState("");
@@ -167,7 +186,9 @@ export default function App() {
       return false;
     }
 
-    return planningSession.questions.every((question) => Boolean(planningAnswers[question.id]));
+    return planningSession.questions.every((question) =>
+      hasPlanningAnswer(planningAnswers[question.id])
+    );
   }, [planningAnswers, planningSession]);
   const activeTaskResult =
     activeStep && taskResult?.stepId === activeStep.id ? taskResult : null;
@@ -689,12 +710,29 @@ export default function App() {
     setPlanningEvents([]);
 
     try {
+      const answers: PlanningAnswer[] = planningSession.questions.map((question) => {
+        const answer = planningAnswers[question.id];
+
+        if (!hasPlanningAnswer(answer)) {
+          throw new Error(`Question ${question.id} is still unanswered.`);
+        }
+
+        return answer.answerType === "custom"
+          ? {
+              questionId: question.id,
+              answerType: "custom",
+              customResponse: answer.customResponse.trim()
+            }
+          : {
+              questionId: question.id,
+              answerType: "option",
+              optionId: answer.optionId
+            };
+      });
+
       const completed = await completePlanningSession({
         sessionId: planningSession.sessionId,
-        answers: planningSession.questions.map((question) => ({
-          questionId: question.id,
-          value: planningAnswers[question.id]!
-        }))
+        answers
       }, appendPlanningEvent);
 
       setPlanningSession(completed.session);
@@ -1014,10 +1052,22 @@ export default function App() {
             }}
             onGoalChange={setPlanningGoal}
             onLearningStyleChange={setPlanningLearningStyle}
-            onAnswerChange={(questionId, value) => {
+            onOptionAnswerChange={(questionId, optionId) => {
               setPlanningAnswers((current) => ({
                 ...current,
-                [questionId]: value
+                [questionId]: {
+                  answerType: "option",
+                  optionId
+                }
+              }));
+            }}
+            onCustomAnswerChange={(questionId, customResponse) => {
+              setPlanningAnswers((current) => ({
+                ...current,
+                [questionId]: {
+                  answerType: "custom",
+                  customResponse
+                }
               }));
             }}
             onStartPlanning={() => {
@@ -1310,7 +1360,13 @@ function FloatingGuideCard({
                   {runtimeGuideEvents.slice(-4).map((event) => (
                     <div key={event.id} className="construct-guide-event-item">
                       <strong>{event.title}</strong>
-                      {event.detail ? <p>{event.detail}</p> : null}
+                      {event.detail ? (
+                        isStreamAgentEvent(event) ? (
+                          <pre className="construct-agent-stream-output">{event.detail}</pre>
+                        ) : (
+                          <p>{event.detail}</p>
+                        )
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -1344,7 +1400,8 @@ function PlanningOverlay({
   onClose,
   onGoalChange,
   onLearningStyleChange,
-  onAnswerChange,
+  onOptionAnswerChange,
+  onCustomAnswerChange,
   onStartPlanning,
   onCompletePlanning,
   canCompletePlanning
@@ -1355,17 +1412,23 @@ function PlanningOverlay({
   planningGoal: string;
   planningLearningStyle: LearningStyle;
   planningPlan: GeneratedProjectPlan | null;
-  planningAnswers: Record<string, ConceptConfidence>;
+  planningAnswers: Record<string, PlanningAnswerDraft>;
   planningSession: PlanningSession | null;
   onClose: () => void;
   onGoalChange: (value: string) => void;
   onLearningStyleChange: (value: LearningStyle) => void;
-  onAnswerChange: (questionId: string, value: ConceptConfidence) => void;
+  onOptionAnswerChange: (questionId: string, optionId: string) => void;
+  onCustomAnswerChange: (questionId: string, customResponse: string) => void;
   onStartPlanning: () => void;
   onCompletePlanning: () => void;
   canCompletePlanning: boolean;
 }) {
   const isQuestionPhase = planningSession && !planningPlan;
+  const answeredQuestionCount = planningSession
+    ? planningSession.questions.filter((question) =>
+        hasPlanningAnswer(planningAnswers[question.id])
+      ).length
+    : 0;
 
   return (
     <motion.div
@@ -1455,33 +1518,88 @@ function PlanningOverlay({
               </div>
             </div>
 
+            <section className="construct-info-panel">
+              <span className="construct-panel-kicker">Architect status</span>
+              <p>
+                The first agent run is complete. Construct has finished researching the
+                project and generated the targeted intake questions. Answer these{" "}
+                {planningSession.questions.length} questions so the Architect can generate
+                the real codebase, hide selected implementation regions, attach hidden
+                tests, and build the personalized task path.
+              </p>
+              <div className="construct-tag-list">
+                <span className="construct-tag">
+                  {answeredQuestionCount} / {planningSession.questions.length} answered
+                </span>
+                <span className="construct-tag">
+                  Next: codebase + masking + hidden tests
+                </span>
+              </div>
+            </section>
+
             <div className="construct-check-list">
-              {planningSession.questions.map((question) => (
-                <section key={question.id} className="construct-check-card">
-                  <div className="construct-check-header">
-                    <span className="construct-panel-kicker">
-                      {formatDetectedLabel(question.category)}
-                    </span>
-                    <h3>{question.prompt}</h3>
-                  </div>
-                  <div className="construct-check-options">
-                    {question.options.map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() => {
-                          onAnswerChange(question.id, option.value);
-                        }}
-                        className={`construct-check-option ${
-                          planningAnswers[question.id] === option.value ? "is-selected" : ""
+              {planningSession.questions.map((question) => {
+                const currentAnswer = planningAnswers[question.id];
+                const selectedOptionId =
+                  currentAnswer?.answerType === "option" ? currentAnswer.optionId : "";
+                const customResponse =
+                  currentAnswer?.answerType === "custom" ? currentAnswer.customResponse : "";
+
+                return (
+                  <section key={question.id} className="construct-check-card">
+                    <div className="construct-check-header">
+                      <span className="construct-panel-kicker">
+                        {formatDetectedLabel(question.category)}
+                      </span>
+                      <h3>{question.prompt}</h3>
+                    </div>
+                    <div className="construct-check-options">
+                      {question.options.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => {
+                            onOptionAnswerChange(question.id, option.id);
+                          }}
+                          className={`construct-check-option ${
+                            selectedOptionId === option.id ? "is-selected" : ""
+                          }`}
+                        >
+                          <strong>{option.label}</strong>
+                          <span>{option.description}</span>
+                        </button>
+                      ))}
+                      <div
+                        className={`construct-check-option construct-check-option--custom ${
+                          currentAnswer?.answerType === "custom" ? "is-selected" : ""
                         }`}
                       >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              ))}
+                        <div className="construct-check-option-header">
+                          <strong>Write a custom answer</strong>
+                          <span>
+                            Use this when your actual experience does not match any
+                            generated option. Construct will send your exact wording to the
+                            Architect.
+                          </span>
+                        </div>
+                        <textarea
+                          value={customResponse}
+                          onFocus={() => {
+                            if (currentAnswer?.answerType !== "custom") {
+                              onCustomAnswerChange(question.id, "");
+                            }
+                          }}
+                          onChange={(event) => {
+                            onCustomAnswerChange(question.id, event.target.value);
+                          }}
+                          className="construct-check-textarea construct-check-textarea--compact"
+                          placeholder="Describe your actual familiarity, gaps, or prior experience in your own words."
+                        />
+                      </div>
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           </section>
         ) : null}
@@ -1543,26 +1661,7 @@ function PlanningOverlay({
               </div>
             </div>
 
-            <div className="construct-guide-event-log">
-              {planningEvents.map((event) => (
-                <div key={event.id} className="construct-guide-event-item">
-                  <strong>{event.title}</strong>
-                  {event.detail ? <p>{event.detail}</p> : null}
-                  {event.stage.startsWith("research") && Array.isArray(event.payload?.sources) ? (
-                    <div className="construct-tag-list">
-                      {(event.payload.sources as Array<{ title?: string }>).map((source, index) => (
-                        <span
-                          key={`${event.id}-${source.title ?? index}`}
-                          className="construct-tag"
-                        >
-                          {source.title ?? "Research source"}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
+            <ArchitectTaskBoard events={planningEvents} />
           </section>
         ) : null}
 
@@ -1579,14 +1678,26 @@ function PlanningOverlay({
               {planningBusy ? "Starting..." : "Start planning"}
             </button>
           ) : !planningPlan ? (
-            <button
-              type="button"
-              onClick={onCompletePlanning}
-              disabled={planningBusy || !canCompletePlanning}
-              className="construct-primary-button"
-            >
-              {planningBusy ? "Generating..." : "Generate personalized plan"}
-            </button>
+            <div className="construct-planning-footer-stack">
+              <p className="construct-muted-copy">
+                Construct only generates the full project, masking, and hidden tests after
+                these answers are complete.
+              </p>
+              <button
+                type="button"
+                onClick={onCompletePlanning}
+                disabled={planningBusy || !canCompletePlanning}
+                className="construct-primary-button"
+              >
+                {planningBusy
+                  ? "Generating codebase..."
+                  : canCompletePlanning
+                    ? "Generate codebase, tasks, and tests"
+                    : `Answer ${planningSession.questions.length - answeredQuestionCount} more question${
+                        planningSession.questions.length - answeredQuestionCount === 1 ? "" : "s"
+                      }`}
+              </button>
+            </div>
           ) : (
             <button type="button" onClick={onClose} className="construct-primary-button">
               Continue to workspace
@@ -1596,6 +1707,78 @@ function PlanningOverlay({
       </motion.section>
     </motion.div>
   );
+}
+
+function formatAgentStageLabel(stage: string): string {
+  return stage
+    .replace(/-stream$/, "")
+    .replace(/^blueprint-/, "")
+    .replace(/^research-/, "research ")
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function buildPlanningEventTags(event: AgentEvent): string[] {
+  const tags: string[] = [];
+  const payload = event.payload as Record<string, unknown> | undefined;
+
+  if (!payload) {
+    return tags;
+  }
+
+  if (event.stage.startsWith("research") && Array.isArray(payload.sources)) {
+    for (const source of payload.sources as Array<{ title?: string }>) {
+      if (typeof source?.title === "string" && source.title.trim()) {
+        tags.push(source.title);
+      }
+    }
+  }
+
+  if (typeof payload.fileCount === "number") {
+    tags.push(`${payload.fileCount} files`);
+  }
+
+  if (typeof payload.stepCount === "number") {
+    tags.push(`${payload.stepCount} steps`);
+  }
+
+  if (typeof payload.architectureNodeCount === "number") {
+    tags.push(`${payload.architectureNodeCount} architecture nodes`);
+  }
+
+  if (typeof payload.supportFileCount === "number") {
+    tags.push(`${payload.supportFileCount} support files`);
+  }
+
+  if (typeof payload.canonicalFileCount === "number") {
+    tags.push(`${payload.canonicalFileCount} canonical files`);
+  }
+
+  if (typeof payload.learnerFileCount === "number") {
+    tags.push(`${payload.learnerFileCount} learner files`);
+  }
+
+  if (typeof payload.testCount === "number") {
+    tags.push(`${payload.testCount} hidden tests`);
+  }
+
+  if (typeof payload.hiddenTestCount === "number") {
+    tags.push(`${payload.hiddenTestCount} hidden tests`);
+  }
+
+  if (typeof payload.packageManager === "string" && payload.packageManager !== "none") {
+    const status =
+      typeof payload.status === "string" ? `${payload.packageManager} ${payload.status}` : payload.packageManager;
+    tags.push(status);
+  }
+
+  if (Array.isArray(payload.samplePaths)) {
+    for (const entry of payload.samplePaths.slice(0, 4)) {
+      tags.push(String(entry));
+    }
+  }
+
+  return Array.from(new Set(tags));
 }
 
 function BriefOverlay({
@@ -2218,7 +2401,248 @@ function appendAgentEvent(events: AgentEvent[], nextEvent: AgentEvent): AgentEve
     return events;
   }
 
+  if (isStreamAgentEvent(nextEvent)) {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const current = events[index];
+
+      if (!isStreamAgentEvent(current) || current.stage !== nextEvent.stage) {
+        continue;
+      }
+
+      const currentPayload = (current.payload ?? {}) as Record<string, unknown>;
+      const nextPayload = (nextEvent.payload ?? {}) as Record<string, unknown>;
+      const mergedText = `${String(currentPayload.text ?? current.detail ?? "")}${String(
+        nextPayload.text ?? nextEvent.detail ?? ""
+      )}`;
+      const mergedEvent: AgentEvent = {
+        ...current,
+        timestamp: nextEvent.timestamp,
+        level: nextEvent.level,
+        title: nextEvent.title,
+        detail: mergedText,
+        payload: {
+          ...currentPayload,
+          ...nextPayload,
+          text: mergedText,
+          stream: true
+        }
+      };
+
+      return [
+        ...events.slice(0, index),
+        mergedEvent,
+        ...events.slice(index + 1)
+      ];
+    }
+  }
+
   return [...events, nextEvent];
+}
+
+function isStreamAgentEvent(event: AgentEvent): boolean {
+  return Boolean((event.payload as Record<string, unknown> | undefined)?.stream);
+}
+
+type ArchitectTaskGroup = {
+  key: string;
+  label: string;
+  eyebrow: string;
+  status: "working" | "done" | "warning" | "error";
+  events: AgentEvent[];
+  latestEvent: AgentEvent;
+  streamText: string;
+};
+
+function ArchitectTaskBoard({ events }: { events: AgentEvent[] }) {
+  const groups = buildArchitectTaskGroups(events);
+  const latestActiveGroup =
+    groups.find((group) => group.status === "working") ?? groups.at(-1) ?? null;
+
+  return (
+    <div className="construct-agent-task-board">
+      {latestActiveGroup ? (
+        <section className="construct-agent-live-banner">
+          <div>
+            <span className="construct-brief-kicker">Live Architect step</span>
+            <h3>{latestActiveGroup.label}</h3>
+            <p>{latestActiveGroup.latestEvent.detail ?? latestActiveGroup.latestEvent.title}</p>
+          </div>
+          <span className={`construct-agent-task-pill is-${latestActiveGroup.status}`}>
+            {formatArchitectStatus(latestActiveGroup.status)}
+          </span>
+        </section>
+      ) : null}
+
+      <div className="construct-agent-task-grid">
+        {groups.map((group) => (
+          <section key={group.key} className="construct-agent-task-card">
+            <div className="construct-agent-task-card-header">
+              <div>
+                <span className="construct-brief-kicker">{group.eyebrow}</span>
+                <h3>{group.label}</h3>
+              </div>
+              <span className={`construct-agent-task-pill is-${group.status}`}>
+                {formatArchitectStatus(group.status)}
+              </span>
+            </div>
+
+            <div className="construct-guide-event-meta">
+              <span className="construct-task-status">
+                {formatAgentStageLabel(group.latestEvent.stage)}
+              </span>
+              <span className={`construct-task-status ${group.latestEvent.level}`}>
+                {group.latestEvent.level}
+              </span>
+            </div>
+
+            <strong>{group.latestEvent.title}</strong>
+            {group.latestEvent.detail ? <p>{group.latestEvent.detail}</p> : null}
+
+            {group.streamText ? (
+              <div className="construct-agent-stream-block">
+                <span className="construct-panel-kicker">Live model draft</span>
+                <pre className="construct-agent-stream-output">{group.streamText}</pre>
+              </div>
+            ) : null}
+
+            {buildPlanningEventTags(group.latestEvent).length > 0 ? (
+              <div className="construct-tag-list">
+                {buildPlanningEventTags(group.latestEvent).map((tag) => (
+                  <span key={`${group.key}-${tag}`} className="construct-tag">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function buildArchitectTaskGroups(events: AgentEvent[]): ArchitectTaskGroup[] {
+  const order: string[] = [];
+  const groups = new Map<string, ArchitectTaskGroup>();
+
+  for (const event of events) {
+    const key = normalizeArchitectTaskKey(event.stage);
+    const existing = groups.get(key);
+
+    if (!existing) {
+      order.push(key);
+      groups.set(key, {
+        key,
+        ...describeArchitectTask(key),
+        status: architectStatusFromLevel(event.level),
+        events: [event],
+        latestEvent: event,
+        streamText: isStreamAgentEvent(event) ? event.detail ?? "" : ""
+      });
+      continue;
+    }
+
+    existing.events.push(event);
+    existing.latestEvent = event;
+    existing.status = architectStatusFromLevel(event.level);
+
+    if (isStreamAgentEvent(event)) {
+      existing.streamText = `${existing.streamText}${event.detail ?? ""}`;
+    }
+  }
+
+  return order.map((key) => groups.get(key)!);
+}
+
+function normalizeArchitectTaskKey(stage: string): string {
+  return stage.replace(/-stream$/, "");
+}
+
+function describeArchitectTask(key: string): { label: string; eyebrow: string } {
+  if (key.startsWith("research-")) {
+    return {
+      label: formatAgentStageLabel(key),
+      eyebrow: "Research"
+    };
+  }
+
+  if (key === "plan-generation") {
+    return {
+      label: "Personalized roadmap synthesis",
+      eyebrow: "Planning"
+    };
+  }
+
+  if (key === "blueprint-generation" || key === "blueprint-synthesis") {
+    return {
+      label: "Runnable project generation",
+      eyebrow: "Generation"
+    };
+  }
+
+  if (key.includes("support-files") || key.includes("canonical-files") || key.includes("learner-mask")) {
+    return {
+      label: formatAgentStageLabel(key),
+      eyebrow: "Files"
+    };
+  }
+
+  if (key.includes("hidden-tests")) {
+    return {
+      label: "Hidden validation creation",
+      eyebrow: "Validation"
+    };
+  }
+
+  if (key.includes("dependency-install")) {
+    return {
+      label: "Dependency preparation",
+      eyebrow: "Install"
+    };
+  }
+
+  if (key.includes("activation") || key.includes("layout")) {
+    return {
+      label: formatAgentStageLabel(key),
+      eyebrow: "Workspace"
+    };
+  }
+
+  return {
+    label: formatAgentStageLabel(key),
+    eyebrow: "Architect"
+  };
+}
+
+function architectStatusFromLevel(
+  level: AgentEvent["level"]
+): ArchitectTaskGroup["status"] {
+  if (level === "success") {
+    return "done";
+  }
+
+  if (level === "warning") {
+    return "warning";
+  }
+
+  if (level === "error") {
+    return "error";
+  }
+
+  return "working";
+}
+
+function formatArchitectStatus(status: ArchitectTaskGroup["status"]): string {
+  switch (status) {
+    case "done":
+      return "Done";
+    case "warning":
+      return "Needs attention";
+    case "error":
+      return "Failed";
+    default:
+      return "Working";
+  }
 }
 
 function buildAnchorSnippet(

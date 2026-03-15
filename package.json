@@ -3,6 +3,12 @@
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@10.23.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  },
   "scripts": {
     "dev": "turbo run dev --parallel",
     "build": "turbo run build",

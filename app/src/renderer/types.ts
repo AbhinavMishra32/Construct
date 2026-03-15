@@ -203,7 +203,7 @@ export type PlanningQuestionOption = {
   id: string;
   label: string;
   description: string;
-  value: ConceptConfidence;
+  confidenceSignal: ConceptConfidence;
 };
 
 export type PlanningQuestion = {
@@ -225,10 +225,17 @@ export type PlanningSession = {
   questions: PlanningQuestion[];
 };
 
-export type PlanningAnswer = {
-  questionId: string;
-  value: ConceptConfidence;
-};
+export type PlanningAnswer =
+  | {
+      questionId: string;
+      answerType: "option";
+      optionId: string;
+    }
+  | {
+      questionId: string;
+      answerType: "custom";
+      customResponse: string;
+    };
 
 export type ConceptNode = {
   id: string;

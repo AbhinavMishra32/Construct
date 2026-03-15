@@ -5,6 +5,7 @@ export default defineConfig({
     main: "src/main/index.ts",
     preload: "src/preload/index.ts"
   },
+  external: ["electron"],
   format: ["cjs"],
   clean: true,
   dts: false,

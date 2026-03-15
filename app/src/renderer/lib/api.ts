@@ -197,6 +197,7 @@ async function runAgentJob<T>(
   return new Promise<T>((resolve, reject) => {
     const stream = new EventSource(`${RUNNER_BASE_URL}${created.streamPath}`);
     let settled = false;
+    let recoveryInFlight = false;
 
     const settleFromSnapshot = (snapshot: AgentJobSnapshot) => {
       if (settled) {
@@ -205,6 +206,7 @@ async function runAgentJob<T>(
 
       if (snapshot.status === "completed") {
         settled = true;
+        window.clearInterval(intervalHandle);
         stream.close();
         resolve(snapshot.result as T);
         return;
@@ -221,9 +223,28 @@ async function runAgentJob<T>(
       }
 
       settled = true;
+      window.clearInterval(intervalHandle);
       stream.close();
       reject(error);
     };
+
+    const intervalHandle = window.setInterval(() => {
+      if (settled || recoveryInFlight) {
+        return;
+      }
+
+      recoveryInFlight = true;
+      void recoverAgentJob(created)
+        .then((snapshot) => {
+          settleFromSnapshot(snapshot);
+        })
+        .catch(() => {
+          // Ignore polling misses while the stream remains open.
+        })
+        .finally(() => {
+          recoveryInFlight = false;
+        });
+    }, 1_000);
 
     stream.addEventListener("agent-event", (event) => {
       try {
@@ -257,6 +278,7 @@ async function runAgentJob<T>(
       }
 
       settled = true;
+      window.clearInterval(intervalHandle);
       stream.close();
       resolve((JSON.parse((event as MessageEvent).data) as { result: T }).result);
     });

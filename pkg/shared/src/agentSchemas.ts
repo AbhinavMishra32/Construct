@@ -14,7 +14,7 @@ export const PlanningQuestionOptionSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   description: z.string().min(1),
-  value: ConceptConfidenceSchema
+  confidenceSignal: ConceptConfidenceSchema
 });
 
 export const PlanningQuestionSchema = z.object({
@@ -41,10 +41,18 @@ export const PlanningSessionSchema = z.object({
   questions: z.array(PlanningQuestionSchema)
 });
 
-export const PlanningAnswerSchema = z.object({
-  questionId: z.string().min(1),
-  value: ConceptConfidenceSchema
-});
+export const PlanningAnswerSchema = z.discriminatedUnion("answerType", [
+  z.object({
+    questionId: z.string().min(1),
+    answerType: z.literal("option"),
+    optionId: z.string().min(1)
+  }),
+  z.object({
+    questionId: z.string().min(1),
+    answerType: z.literal("custom"),
+    customResponse: z.string().trim().min(1).max(2_000)
+  })
+]);
 
 export const ConceptNodeSchema = z.object({
   id: z.string().min(1),
