@@ -2,6 +2,13 @@ import Editor from "@monaco-editor/react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { editor as MonacoEditor } from "monaco-editor";
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import {
+  oneDark,
+  oneLight
+} from "react-syntax-highlighter/dist/esm/styles/prism";
 
 import { findAnchorLocation } from "./lib/anchors";
 import {
@@ -1938,11 +1945,11 @@ function PlanningOverlay({
           <section className="construct-planning-questions">
             <div className="construct-brief-section-header">
               <div>
-                <span className="construct-brief-kicker">Knowledge Graph</span>
+                <span className="construct-brief-kicker">Project Tailoring</span>
                 <h2>
-                  Answer the targeted concept questions for{" "}
-                  {formatDetectedLabel(planningSession.detectedDomain)} in{" "}
-                  {formatDetectedLabel(planningSession.detectedLanguage)}.
+                  Help the Architect tailor {formatDetectedLabel(planningSession.detectedDomain)}{" "}
+                  in {formatDetectedLabel(planningSession.detectedLanguage)} to your real
+                  experience and preferred pace.
                 </h2>
               </div>
             </div>
@@ -1951,10 +1958,10 @@ function PlanningOverlay({
               <span className="construct-panel-kicker">Architect status</span>
               <p>
                 The first agent run is complete. Construct has finished researching the
-                project and generated the targeted intake questions. Answer these{" "}
-                {planningSession.questions.length} questions so the Architect can generate
-                the real codebase, hide selected implementation regions, attach hidden
-                tests, and build the personalized task path.
+                project and generated a few tailoring questions. Answer these{" "}
+                {planningSession.questions.length} prompts so the Architect can shape the
+                real codebase, teaching depth, hidden tests, and project path around how
+                you want to learn and where you want more support.
               </p>
               <div className="construct-tag-list">
                 <span className="construct-tag">
@@ -1978,7 +1985,7 @@ function PlanningOverlay({
                   <section key={question.id} className="construct-check-card">
                     <div className="construct-check-header">
                       <span className="construct-panel-kicker">
-                        {formatDetectedLabel(question.category)}
+                        {formatPlanningQuestionCategory(question.category)}
                       </span>
                       <h3>{question.prompt}</h3>
                     </div>
@@ -2004,11 +2011,11 @@ function PlanningOverlay({
                         }`}
                       >
                         <div className="construct-check-option-header">
-                          <strong>Write a custom answer</strong>
+                          <strong>Tell the Architect in your own words</strong>
                           <span>
-                            Use this when your actual experience does not match any
-                            generated option. Construct will send your exact wording to the
-                            Architect.
+                            Use this when none of the generated options fits. Construct
+                            will send your exact wording to the Architect so it can tailor
+                            the project around your real situation.
                           </span>
                         </div>
                         <textarea
@@ -2022,7 +2029,7 @@ function PlanningOverlay({
                             onCustomAnswerChange(question.id, event.target.value);
                           }}
                           className="construct-check-textarea construct-check-textarea--compact"
-                          placeholder="Describe your actual familiarity, gaps, or prior experience in your own words."
+                          placeholder="Describe your background, preferences, likely blockers, or the kind of support you want in your own words."
                         />
                       </div>
                     </div>
@@ -2259,6 +2266,7 @@ function BriefOverlay({
   const [phase, setPhase] = useState<"cover" | "lesson" | "check" | "exercise">("cover");
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [activeCheckIndex, setActiveCheckIndex] = useState(0);
+  const overlayScrollRef = useRef<HTMLDivElement | null>(null);
   const activeCheck = activeStep.checks[activeCheckIndex] ?? null;
   const activeCheckReview = activeCheck ? checkReviews[activeCheck.id] : undefined;
   const activeCheckAttempts = activeCheck ? checkAttemptCounts[activeCheck.id] ?? 0 : 0;
@@ -2268,6 +2276,14 @@ function BriefOverlay({
     setActiveSlideIndex(0);
     setActiveCheckIndex(0);
   }, [activeStep.id]);
+
+  useEffect(() => {
+    if (!overlayScrollRef.current) {
+      return;
+    }
+
+    overlayScrollRef.current.scrollTop = 0;
+  }, [activeStep.id, activeSlideIndex, activeCheckIndex, phase]);
 
   const goToExercise = () => {
     setPhase("exercise");
@@ -2312,6 +2328,7 @@ function BriefOverlay({
 
   return (
     <motion.div
+      ref={overlayScrollRef}
       className="construct-brief-overlay"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
@@ -2761,104 +2778,82 @@ function InfoPanel({
 }
 
 function MarkdownSlide({ markdown }: { markdown: string }) {
-  const blocks = parseMarkdownBlocks(markdown);
+  const codeTheme = getConstructThemeMode() === "dark" ? oneDark : oneLight;
+  const markdownComponents: Components = {
+    code({ className, children, ...props }) {
+      const languageMatch = /language-([\w-]+)/.exec(className ?? "");
+      const rawCode = String(children);
+      const code = rawCode.replace(/\n$/, "");
+      const isInlineLike = !languageMatch && !rawCode.includes("\n");
 
-  return (
-    <div className="construct-markdown">
-      {blocks.map((block, index) => {
-        if (block.type === "heading") {
-          if (block.level === 1) {
-            return <h1 key={`${block.type}-${index}`}>{block.content}</h1>;
-          }
-
-          if (block.level === 2) {
-            return <h2 key={`${block.type}-${index}`}>{block.content}</h2>;
-          }
-
-          return <h3 key={`${block.type}-${index}`}>{block.content}</h3>;
-        }
-
-        if (block.type === "list") {
-          const ListTag = block.ordered ? "ol" : "ul";
-
-          return (
-            <ListTag key={`${block.type}-${index}`}>
-              {block.items.map((item) => (
-                <li key={item}>{renderInlineMarkdown(item)}</li>
-              ))}
-            </ListTag>
-          );
-        }
-
-        if (block.type === "blockquote") {
-          return (
-            <blockquote key={`${block.type}-${index}`} className="construct-markdown-quote">
-              {renderInlineMarkdown(block.content)}
-            </blockquote>
-          );
-        }
-
-        if (block.type === "divider") {
-          return <hr key={`${block.type}-${index}`} className="construct-markdown-divider" />;
-        }
-
-        if (block.type === "code") {
-          return (
-            <pre key={`${block.type}-${index}`} className="construct-markdown-code">
-              <code>{block.content}</code>
-            </pre>
-          );
-        }
-
-        return <p key={`${block.type}-${index}`}>{renderInlineMarkdown(block.content)}</p>;
-      })}
-    </div>
-  );
-}
-
-function renderInlineMarkdown(text: string) {
-  return text
-    .split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g)
-    .filter(Boolean)
-    .map((segment, index) => {
-      if (segment.startsWith("`") && segment.endsWith("`")) {
+      if (isInlineLike) {
         return (
-          <code key={`inline-code-${index}`} className="construct-markdown-inline-code">
-            {segment.slice(1, -1)}
+          <code className="construct-markdown-inline-code" {...props}>
+            {children}
           </code>
         );
       }
 
-      if (segment.startsWith("**") && segment.endsWith("**")) {
-        return <strong key={`inline-strong-${index}`}>{segment.slice(2, -2)}</strong>;
-      }
+      return (
+        <div className="construct-markdown-code-frame">
+          <div className="construct-markdown-code-header">
+            <span>{languageMatch?.[1] ?? "code"}</span>
+          </div>
+          <SyntaxHighlighter
+            style={codeTheme}
+            language={languageMatch?.[1] ?? "text"}
+            PreTag="div"
+            className="construct-markdown-code-block"
+            customStyle={{
+              margin: 0,
+              padding: "20px 22px",
+              background: "transparent",
+              borderRadius: 0,
+              fontSize: "15px",
+              lineHeight: "1.7",
+              overflowX: "auto"
+            }}
+            codeTagProps={{
+              style: {
+                fontFamily: "var(--course-font-mono)"
+              }
+            }}
+          >
+            {code}
+          </SyntaxHighlighter>
+        </div>
+      );
+    },
+    a({ className, ...props }) {
+      return <a className={`construct-markdown-link ${className ?? ""}`.trim()} {...props} />;
+    },
+    table({ className, ...props }) {
+      return (
+        <div className="construct-markdown-table-wrap">
+          <table className={`construct-markdown-table ${className ?? ""}`.trim()} {...props} />
+        </div>
+      );
+    },
+    blockquote({ className, ...props }) {
+      return (
+        <blockquote
+          className={`construct-markdown-quote ${className ?? ""}`.trim()}
+          {...props}
+        />
+      );
+    },
+    hr({ className, ...props }) {
+      return <hr className={`construct-markdown-divider ${className ?? ""}`.trim()} {...props} />;
+    }
+  };
 
-      if (
-        segment.startsWith("[") &&
-        segment.includes("](") &&
-        segment.endsWith(")")
-      ) {
-        const match = segment.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-        if (match) {
-          const [, label, href] = match;
-          return (
-            <a
-              key={`inline-link-${index}`}
-              href={href}
-              className="construct-markdown-link"
-            >
-              {label}
-            </a>
-          );
-        }
-      }
-
-      if (segment.startsWith("*") && segment.endsWith("*")) {
-        return <em key={`inline-em-${index}`}>{segment.slice(1, -1)}</em>;
-      }
-
-      return segment;
-    });
+  return (
+    <div className="construct-markdown">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {markdown}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 function MetadataList({ title, values }: { title: string; values: string[] }) {
@@ -2887,144 +2882,6 @@ function MetricPill({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
-}
-
-type MarkdownBlock =
-  | { type: "heading"; content: string; level: 1 | 2 | 3 }
-  | { type: "paragraph"; content: string }
-  | { type: "list"; items: string[]; ordered: boolean }
-  | { type: "blockquote"; content: string }
-  | { type: "divider" }
-  | { type: "code"; content: string };
-
-function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
-  const lines = markdown.replace(/\r/g, "").split("\n");
-  const blocks: MarkdownBlock[] = [];
-  let index = 0;
-
-  while (index < lines.length) {
-    const line = lines[index]?.trimEnd() ?? "";
-
-    if (!line.trim()) {
-      index += 1;
-      continue;
-    }
-
-    if (line.startsWith("```")) {
-      index += 1;
-      const codeLines: string[] = [];
-
-      while (index < lines.length && !lines[index].startsWith("```")) {
-        codeLines.push(lines[index]);
-        index += 1;
-      }
-
-      blocks.push({
-        type: "code",
-        content: codeLines.join("\n")
-      });
-      index += 1;
-      continue;
-    }
-
-    if (/^---+$/.test(line.trim())) {
-      blocks.push({ type: "divider" });
-      index += 1;
-      continue;
-    }
-
-    if (line.startsWith("#")) {
-      const level = Math.min(line.match(/^#+/)?.[0].length ?? 1, 3) as 1 | 2 | 3;
-      blocks.push({
-        type: "heading",
-        content: line.replace(/^#+\s*/, "").trim(),
-        level
-      });
-      index += 1;
-      continue;
-    }
-
-    if (line.startsWith("> ")) {
-      const quoteLines: string[] = [];
-
-      while (index < lines.length) {
-        const quoteLine = lines[index]?.trim() ?? "";
-        if (!quoteLine.startsWith("> ")) {
-          break;
-        }
-
-        quoteLines.push(quoteLine.slice(2).trim());
-        index += 1;
-      }
-
-      blocks.push({
-        type: "blockquote",
-        content: quoteLines.join(" ")
-      });
-      continue;
-    }
-
-    if (line.startsWith("- ") || line.startsWith("* ") || /^\d+\.\s+/.test(line.trim())) {
-      const items: string[] = [];
-      const ordered = /^\d+\.\s+/.test(line.trim());
-
-      while (index < lines.length) {
-        const itemLine = lines[index]?.trim() ?? "";
-        if (ordered) {
-          if (!/^\d+\.\s+/.test(itemLine)) {
-            break;
-          }
-
-          items.push(itemLine.replace(/^\d+\.\s+/, "").trim());
-          index += 1;
-          continue;
-        }
-
-        if (!itemLine.startsWith("- ") && !itemLine.startsWith("* ")) {
-          break;
-        }
-
-        items.push(itemLine.slice(2).trim());
-        index += 1;
-      }
-
-      blocks.push({
-        type: "list",
-        items,
-        ordered
-      });
-      continue;
-    }
-
-    const paragraphLines = [line.trim()];
-    index += 1;
-
-    while (index < lines.length) {
-      const nextLine = lines[index]?.trim() ?? "";
-      if (
-        !nextLine ||
-        nextLine.startsWith("#") ||
-        nextLine.startsWith("- ") ||
-        nextLine.startsWith("* ") ||
-        /^\d+\.\s+/.test(nextLine) ||
-        nextLine.startsWith("> ") ||
-        nextLine.startsWith("```") ||
-        /^---+$/.test(nextLine)
-      ) {
-        break;
-      }
-
-      paragraphLines.push(nextLine);
-      index += 1;
-    }
-
-    blocks.push({
-      type: "paragraph",
-      content: paragraphLines.join(" ")
-    });
-  }
-
-  return blocks;
 }
 
 function CheckCard({
@@ -3335,6 +3192,23 @@ function formatDetectedLabel(value: string): string {
     .filter(Boolean)
     .map((part) => part[0].toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatPlanningQuestionCategory(value: string): string {
+  switch (value) {
+    case "language":
+      return "Language fit";
+    case "domain":
+      return "Project fit";
+    case "workflow":
+      return "Learning fit";
+    default:
+      return formatDetectedLabel(value);
+  }
+}
+
+function getConstructThemeMode(): ThemeMode {
+  return document.documentElement.dataset.constructTheme === "dark" ? "dark" : "light";
 }
 
 function formatDuration(durationMs: number): string {

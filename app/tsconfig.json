@@ -9,6 +9,7 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
+    "src/**/*.d.ts",
     "vite.config.ts",
     "tailwind.config.ts",
     "tsup.config.ts"

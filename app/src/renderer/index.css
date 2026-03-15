@@ -43,11 +43,14 @@
   --course-text: #111111;
   --course-muted: #666666;
   --course-soft: #8a8a8a;
-  --course-code-bg: #fafafa;
-  --course-code-border: #e5e5e5;
+  --course-code-bg: #fcfcfc;
+  --course-code-border: #e5e7eb;
+  --course-code-header-bg: #fafafa;
   --course-inline-code-bg: #f5f5f5;
   --course-inline-code-border: #e5e5e5;
   --course-accent: #0070f3;
+  --course-prose-strong: #111111;
+  --course-prose-code: #0f172a;
   --course-font-sans: "Geist", "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --course-font-mono: "Geist Mono", "SF Mono", "Menlo", monospace;
 }
@@ -94,9 +97,12 @@
   --course-soft: #71717a;
   --course-code-bg: #0a0a0a;
   --course-code-border: #27272a;
+  --course-code-header-bg: #09090b;
   --course-inline-code-bg: #171717;
   --course-inline-code-border: #27272a;
   --course-accent: #4da3ff;
+  --course-prose-strong: #fafafa;
+  --course-prose-code: #e4e4e7;
 }
 
 html,
@@ -856,6 +862,8 @@ textarea {
   padding: 0;
   background: color-mix(in srgb, var(--panel-overlay) 96%, transparent);
   backdrop-filter: blur(12px);
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .construct-planning-overlay {
@@ -1071,17 +1079,19 @@ textarea {
 
 .construct-brief-panel {
   width: 100%;
-  height: 100%;
+  min-height: 100%;
+  height: auto;
   display: block;
   border-radius: 0;
-  overflow: hidden;
+  overflow: visible;
   border: 0;
   box-shadow: none;
   background: var(--course-bg);
 }
 
 .construct-course-shell {
-  height: 100%;
+  min-height: 100%;
+  height: auto;
   display: flex;
   flex-direction: column;
   background: var(--course-bg);
@@ -1097,6 +1107,9 @@ textarea {
   padding: 18px 28px;
   border-bottom: 1px solid var(--course-border);
   background: var(--course-bg);
+  position: sticky;
+  top: 0;
+  z-index: 6;
 }
 
 .construct-course-topbar-copy {
@@ -1120,8 +1133,8 @@ textarea {
 }
 
 .construct-course-cover {
-  flex: 1;
-  min-height: 0;
+  flex: 1 0 auto;
+  min-height: calc(100vh - 81px);
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) 360px;
 }
@@ -1133,13 +1146,16 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  min-height: 0;
-  overflow: auto;
+  min-height: auto;
+  overflow: visible;
+  align-self: start;
+  position: sticky;
+  top: 81px;
 }
 
 .construct-course-cover-main {
-  min-height: 0;
-  overflow: auto;
+  min-height: auto;
+  overflow: visible;
   padding: 48px 56px;
   display: flex;
   flex-direction: column;
@@ -1196,10 +1212,10 @@ textarea {
 }
 
 .construct-course-stage {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 24px 40px 32px;
+  flex: 1 0 auto;
+  min-height: calc(100vh - 81px);
+  overflow: visible;
+  padding: 24px 40px 120px;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -1268,8 +1284,8 @@ textarea {
 
 .construct-course-slide-stage,
 .construct-course-check-stage {
-  flex: 1;
-  min-height: 0;
+  flex: 0 0 auto;
+  min-height: auto;
   display: flex;
   width: 100%;
 }
@@ -1286,10 +1302,10 @@ textarea {
 }
 
 .construct-course-slide-surface {
-  width: min(1040px, 100%);
+  width: min(980px, 100%);
   min-height: 100%;
   margin: 0 auto;
-  padding: 18px 0 40px;
+  padding: 28px 0 72px;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1298,49 +1314,50 @@ textarea {
 }
 
 .construct-course-slide-surface .construct-markdown {
-  width: min(900px, 100%);
+  width: min(860px, 100%);
   margin: 0 auto;
-  gap: 22px;
+  gap: 28px;
 }
 
 .construct-course-slide-surface .construct-markdown h1,
 .construct-course-slide-surface .construct-markdown h2,
 .construct-course-slide-surface .construct-markdown h3 {
-  margin: 0;
+  margin: 0.15em 0 0.35em;
   letter-spacing: -0.045em;
-  max-width: 19ch;
+  max-width: 15ch;
   color: var(--course-text);
   font-weight: 600;
-  text-wrap: balance;
+  text-wrap: pretty;
 }
 
 .construct-course-slide-surface .construct-markdown h1 {
-  font-size: clamp(30px, 3.2vw, 40px);
-  line-height: 1.08;
+  font-size: clamp(42px, 4.6vw, 76px);
+  line-height: 1;
 }
 
 .construct-course-slide-surface .construct-markdown h2 {
-  font-size: clamp(24px, 2.2vw, 32px);
-  line-height: 1.15;
+  font-size: clamp(28px, 2.7vw, 42px);
+  line-height: 1.08;
 }
 
 .construct-course-slide-surface .construct-markdown h3 {
-  font-size: clamp(20px, 1.6vw, 24px);
-  line-height: 1.28;
-  letter-spacing: -0.035em;
+  font-size: clamp(21px, 1.9vw, 30px);
+  line-height: 1.18;
+  letter-spacing: -0.028em;
 }
 
 .construct-course-slide-surface .construct-markdown p,
 .construct-course-slide-surface .construct-markdown li {
-  font-size: clamp(16px, 1.15vw, 19px);
-  line-height: 1.9;
+  font-size: clamp(18px, 1.22vw, 21px);
+  line-height: 1.85;
   color: var(--course-text);
   font-weight: 400;
-  max-width: 72ch;
+  max-width: 66ch;
 }
 
 .construct-course-slide-surface .construct-markdown strong {
-  font-weight: 600;
+  color: var(--course-prose-strong);
+  font-weight: 650;
 }
 
 .construct-course-slide-surface .construct-markdown em {
@@ -1349,43 +1366,32 @@ textarea {
 
 .construct-course-slide-surface .construct-markdown ul,
 .construct-course-slide-surface .construct-markdown ol {
-  padding-left: 1.4rem;
-  margin: 0;
+  padding-left: 1.55rem;
+  margin: 4px 0;
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .construct-course-slide-surface .construct-markdown li::marker {
   color: var(--course-soft);
 }
 
-.construct-course-slide-surface .construct-markdown-code {
-  padding: 22px 24px;
-  font-size: 15px;
-  line-height: 1.6;
-  border-radius: 16px;
-  border: 1px solid var(--course-code-border);
-  background: var(--course-code-bg);
-  color: var(--course-text);
-  font-family: var(--course-font-mono);
-}
-
 .construct-course-slide-surface .construct-markdown-quote {
-  margin: 4px 0;
-  padding: 14px 18px;
+  margin: 6px 0;
+  padding: 20px 22px;
   border-left: 3px solid var(--course-border);
   color: var(--course-muted);
   background: var(--course-elevated);
   border-radius: 0 12px 12px 0;
-  max-width: 72ch;
+  max-width: 66ch;
 }
 
 .construct-course-slide-surface .construct-markdown-divider {
   border: 0;
   border-top: 1px solid var(--course-border);
   width: 100%;
-  max-width: 72ch;
-  margin: 4px 0;
+  max-width: 68ch;
+  margin: 8px 0;
 }
 
 .construct-course-check-surface {
@@ -1412,7 +1418,18 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding-top: 4px;
+  padding: 24px 0 max(12px, env(safe-area-inset-bottom));
+  margin-top: 8px;
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--course-bg) 0%, transparent) 0%,
+    color-mix(in srgb, var(--course-bg) 78%, transparent) 24%,
+    var(--course-bg) 58%
+  );
+  backdrop-filter: blur(8px);
 }
 
 .construct-course-shell .construct-brief-kicker,
@@ -1632,36 +1649,70 @@ textarea {
 .construct-markdown {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 20px;
+  color: var(--course-text);
+  font-family: var(--course-font-sans);
+}
+
+.construct-markdown h1,
+.construct-markdown h2,
+.construct-markdown h3,
+.construct-markdown h4 {
+  margin: 1.3em 0 0.45em;
+  color: var(--course-text);
+  font-family: var(--course-font-sans);
+  font-weight: 600;
+  text-wrap: pretty;
+}
+
+.construct-markdown h1 {
+  font-size: clamp(2.35rem, 3.6vw, 4.6rem);
+  line-height: 1.02;
+  letter-spacing: -0.05em;
+}
+
+.construct-markdown h2 {
+  font-size: clamp(1.8rem, 2.45vw, 3rem);
+  line-height: 1.1;
+  letter-spacing: -0.038em;
 }
 
 .construct-markdown h3 {
-  margin: 0;
-  font-size: 18px;
-  line-height: 1.35;
-  letter-spacing: -0.02em;
+  font-size: clamp(1.25rem, 1.75vw, 1.9rem);
+  line-height: 1.22;
+  letter-spacing: -0.028em;
 }
 
 .construct-markdown p,
 .construct-markdown li {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--text);
+  font-size: 1.12rem;
+  line-height: 1.9;
+  color: var(--course-text);
+  max-width: 66ch;
+}
+
+.construct-markdown strong {
+  color: var(--course-prose-strong);
+  font-weight: 650;
+}
+
+.construct-markdown em {
+  font-style: italic;
 }
 
 .construct-markdown-inline-code {
   display: inline-flex;
   align-items: center;
   min-height: 1.8em;
-  padding: 0 0.42em;
+  padding: 0 0.46em;
   margin: 0 0.08em;
   border-radius: 0.5rem;
   border: 1px solid var(--course-inline-code-border);
   background: var(--course-inline-code-bg);
-  color: var(--course-text);
+  color: var(--course-prose-code);
   font-family: var(--course-font-mono);
-  font-size: 0.88em;
+  font-size: 0.84em;
   line-height: 1;
 }
 
@@ -1674,25 +1725,83 @@ textarea {
   text-decoration: underline;
 }
 
-.construct-markdown ul {
+.construct-markdown ul,
+.construct-markdown ol {
   margin: 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  padding-left: 1.45rem;
+  display: grid;
+  gap: 0.65rem;
 }
 
-.construct-markdown-code {
-  margin: 0;
-  overflow-x: auto;
+.construct-markdown li::marker {
+  color: var(--course-soft);
+}
+
+.construct-markdown-code-frame {
+  margin: 12px 0;
+  overflow: hidden;
   border-radius: 16px;
   border: 1px solid var(--course-code-border);
   background: var(--course-code-bg);
+  max-width: 100%;
+}
+
+.construct-markdown-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--course-code-border);
+  background: var(--course-code-header-bg);
+  color: var(--course-muted);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.construct-markdown-code-block {
+  margin: 0 !important;
+  background: transparent !important;
+}
+
+.construct-markdown-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 16px;
+  border: 1px solid var(--course-border);
+}
+
+.construct-markdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--course-surface);
+}
+
+.construct-markdown-table th,
+.construct-markdown-table td {
   padding: 14px 16px;
-  font-size: 13px;
-  line-height: 1.65;
+  border-bottom: 1px solid var(--course-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.construct-markdown-table th {
+  color: var(--course-prose-strong);
+  font-weight: 600;
+  background: var(--course-elevated);
+}
+
+.construct-markdown-table td {
   color: var(--course-text);
-  font-family: var(--course-font-mono);
+}
+
+.construct-markdown-quote {
+  margin: 8px 0;
+}
+
+.construct-markdown-divider {
+  margin: 1.5rem 0;
 }
 
 .construct-brief-column {
@@ -1908,6 +2017,7 @@ textarea {
   .construct-course-outline {
     border-left: 0;
     border-top: 1px solid var(--border);
+    position: static;
   }
 
   .construct-course-cover-grid,
@@ -1952,6 +2062,7 @@ textarea {
   .construct-course-outline {
     border-top: 1px solid var(--border);
     border-left: 0;
+    position: static;
   }
 
   .construct-course-cover-main,
@@ -2034,6 +2145,7 @@ textarea {
   .construct-course-stage-footer {
     flex-direction: column;
     align-items: stretch;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
   }
 }
 

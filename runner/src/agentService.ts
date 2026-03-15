@@ -999,7 +999,7 @@ export class ConstructAgentService {
         })
       }))
       .addNode("generateQuestions", async (state) => ({
-        session: await this.withStage(jobId, "question-generation", "Generating targeted knowledge questions", "OpenAI is turning the goal and stored knowledge into concept-level intake questions.", async () => {
+        session: await this.withStage(jobId, "question-generation", "Generating project-tailoring questions", "OpenAI is turning the goal and stored knowledge into collaborative intake questions that tailor the project path.", async () => {
           const stream = this.createModelStreamForwarder(jobId, "question-generation", "question generation");
           try {
             const questionDraft = await this.getLlm().parse({
@@ -3366,17 +3366,24 @@ function buildQuestionGenerationInstructions(): string {
   return [
     "You are Construct's Architect agent.",
     "Your job is to prepare the intake phase for a serious local AI developer IDE.",
-    "Given a project goal, prior stored learner knowledge, and optional lightweight web research, generate concept-level knowledge questions.",
+    "Given a project goal, prior stored learner knowledge, and optional lightweight web research, generate project-tailoring intake questions.",
+    "These are tailoring questions, not assessment questions and not quiz questions.",
     "Ask only the minimum questions needed to personalize the build path.",
-    "Questions must be exact and technical, not generic confidence surveys.",
-    "For every question, generate exactly 3 answer options. Options should be specific to the question, not generic repeated wording.",
+    "The learner should feel like they are helping the Architect tune scope, pacing, depth, and support style for this exact project.",
+    "Never ask the learner to recall the correct syntax, API, command, definition, keyword, or utility type name.",
+    "Never write a question with a single objectively correct technical answer.",
+    "Do not ask textbook questions like 'Which X does Y?' or 'What command creates Z?'.",
+    "Instead ask which statement best matches their real experience, preference, likely blocker, desired support level, or where they want the Architect to slow down.",
+    "Good questions often start with phrases like 'Which statement best matches...', 'What would help most when...', or 'Where should Construct go deeper while you build...'.",
+    "For every question, generate exactly 3 answer options. Options should be specific to the question and written as first-person self-descriptions, not factual answer choices.",
     "Each option must include a confidenceSignal of comfortable, shaky, or new so Construct can normalize the answer without losing the richer user-facing wording.",
     "Do not generate a custom-answer option in the schema. The UI always provides a fourth freeform answer path separately.",
     "Detected language and domain must match the target project.",
-    "Favor prerequisite concepts that affect implementation order.",
+    "Favor prerequisite concepts, likely blockers, workflow preferences, and depth decisions that actually affect implementation order or how much explanation the learner needs.",
     "Use goalScope.recommendedQuestionCount as the target number of questions.",
     "Use goalScope.scopeSummary and goalScope.artifactShape to decide how local or broad the intake should be.",
-    "Do not ask about concepts that are already clearly comfortable in the prior knowledge base unless the new goal materially changes their meaning."
+    "Do not ask about concepts that are already clearly comfortable in the prior knowledge base unless the new goal materially changes their meaning.",
+    "If you need to ask about a concept like TypeScript utility types, ask about lived usage and desired support, for example: 'Which statement best matches your current experience using utility types like Partial<T> when shaping update payloads in real code?'"
   ].join("\n");
 }
 
@@ -3415,19 +3422,28 @@ function buildBlueprintGenerationInstructions(): string {
     "The answers payload includes the original question, the available options, and either a selected option or a custom freeform learner response. Use that context to tune scope, docs, checks, and task ordering.",
     "Every step must point to a real learnerFile anchor and include lessonSlides, doc text, comprehension checks, constraints, and targeted tests.",
     "lessonSlides are the main teaching surface. Write them like a real course lesson in markdown, not like a checklist of instructions.",
-    "Teach the required concept from the learner's current level so they can actually solve the task afterward. Use markdown prose, bullet lists, ordered lists, blockquotes, and fenced code snippets when helpful.",
+    "Teach the required concept from the learner's current level so they can actually solve the task afterward. Use rich markdown prose, bullet lists, ordered lists, blockquotes, horizontal rules, tables when useful, and fenced code snippets when helpful.",
     "lessonSlides should teach the concept in markdown before the task begins. Emit each slide as its own array entry. Do not collapse multiple slides into one string.",
-    "The first step must open with at least two real teaching slides unless the user explicitly asked for setup/tooling rather than implementation.",
+    "The first step must open with at least three real teaching slides unless the user explicitly asked for setup/tooling rather than implementation.",
     "The first step should teach and implement the first meaningful code behavior or design decision, not environment setup or package scaffolding.",
     "Do not generate a first step about pinning versions, creating a venv, installing test tools, package metadata, or generic project layout unless the user's goal explicitly asks for that.",
     "lessonSlides must explain the why and how of the concept. They should not mainly say what the learner has to do next.",
     "Do not write slides like task instructions, setup checklists, TODO lists, or short reminders. The lesson should feel like a real explanation that teaches the idea itself.",
     "Do not start slides with 'Step 1', 'Step 2', or by repeating the step title as a markdown heading. The UI already shows course and step context.",
     "Avoid giant title-only slides. Prefer explanation-rich markdown that reads like technical documentation or a high-quality lesson chapter.",
-    "Each slide should usually be substantial, not tiny. A good slide normally contains at least two explanatory paragraphs, or one paragraph plus a concrete list/example/code sketch.",
+    "Each slide should usually be substantial, not tiny. For non-trivial steps, most slides should feel like a docs section: multiple paragraphs plus at least one concrete structure such as a list, example, code sketch, comparison table, or callout.",
     "For the first step and for any brand-new concept, it is usually better to generate 3-5 substantial markdown slides than 1-2 shallow ones.",
-    "Explain the mental model, the important APIs or language features involved, the invariants/constraints, and the exact behavior the later exercise will require.",
-    "Use code fences for conceptual sketches when helpful, but do not dump the full solution into the lesson.",
+    "When a concept is new or foundational, a single slide should often contain roughly 180-350 words of explanation unless the concept is genuinely small.",
+    "Explain the mental model, the important APIs or language features involved, the invariants/constraints, common mistakes, and the exact behavior the later exercise will require.",
+    "Use code fences for conceptual sketches and worked examples when helpful, but do not dump the full solution into the lesson.",
+    "Do not make slides read like flash cards, presenter notes, or splash screens. They should read like polished technical documentation written to teach, not to decorate.",
+    "The learner should be able to read the slides alone and understand why the implementation is structured the way it is before reaching the task.",
+    "A one-paragraph summary is not a lesson. Do not move to checks after a summary slide. The lesson must first establish the concept in enough depth that a beginner could explain it back.",
+    "Before you create any comprehension check, make sure the lessonSlides have already explicitly taught every fact, API, language feature, and design reason that the check will ask about.",
+    "Do not ask a check about a concept that was not clearly explained in the lessonSlides. For example, do not ask about a Python __main__ guard unless the slides explicitly teach import-time safety, script entrypoints, and why the guard exists.",
+    "Checks should confirm understanding of the explanation, not assess unrelated recall. If a check could feel like an interview question or trivia question, rewrite either the lesson or the check.",
+    "The first step should usually have only 1-2 checks, and they should directly follow from the lesson content. Prefer fewer, better-grounded checks over many shallow ones.",
+    "If the learner is being taught a new capability, the slides should normally cover: what the concept is, why it matters in this project, a worked example, common mistakes, and how it maps to the upcoming exercise.",
     "For small or local requests, stay tightly scoped. Do not invent setup-heavy preliminaries, validation harness units, optional export features, platform checks, or packaging tasks before the first meaningful implementation step unless the user explicitly asked for them.",
     "doc should describe the exercise or implementation task itself, not repeat the whole concept lesson. It must clearly say what code the learner will change, what behavior the tests will verify, and how the task connects to the just-taught concept.",
     "The exercise should be solvable from the lessonSlides and checks that come before it. The quiz must be grounded in the lessonSlides, not random setup trivia or command memorization.",
@@ -3450,8 +3466,10 @@ function buildBlueprintDeepDiveInstructions(): string {
     "Return technically accurate markdown slides that build from the learner's current confusion and latest failure signal.",
     "Do not repeat the step title as a heading. The UI already shows the step context.",
     "The slides should usually be 2-4 substantial markdown slides, not a one-line reminder and not a giant essay.",
-    "Each slide should add real teaching depth: explain the mental model, the exact failure mode, a worked example, and the reasoning needed to succeed on the task.",
+    "Each slide should add real teaching depth: explain the mental model, the exact failure mode, a worked example, the relevant APIs or syntax, and the reasoning needed to succeed on the task.",
+    "Write the slides as polished markdown documentation with multiple paragraphs and supporting structure such as lists, blockquotes, and fenced code examples where helpful.",
     "Teach the idea itself. Do not respond with a checklist of what the learner should do next.",
+    "If the learner got a check wrong, explicitly teach the exact concept that the check is trying to verify before returning them to that check.",
     "The checks should verify the new explanation before the learner returns to the implementation.",
     "Use the failure count, hints used, revealed hints, task result, and prior knowledge to decide what to deepen.",
     "Assume the new slides and checks will be prepended to the existing step."

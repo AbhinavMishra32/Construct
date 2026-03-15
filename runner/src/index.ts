@@ -17,7 +17,6 @@ import {
 } from "@construct/shared";
 
 import { ConstructAgentService } from "./agentService";
-import { AgentPlannerService } from "./agentPlanner";
 import { WorkspaceFileManager } from "./fileManager";
 import { SnapshotService } from "./snapshots";
 import { TaskLifecycleService } from "./taskLifecycle";
@@ -34,7 +33,6 @@ loadRunnerEnvironment(rootDir);
 
 const port = Number(process.env.CONSTRUCT_RUNNER_PORT ?? 43110);
 const testRunner = new TestRunnerManager();
-const agentPlanner = new AgentPlannerService(rootDir);
 let constructAgent: ConstructAgentService | null = null;
 let workspaceContextPromise: Promise<WorkspaceContext> | null = null;
 let workspaceContextBlueprintPath = "";
@@ -232,26 +230,6 @@ const server = http.createServer(async (request, response) => {
           content
         })
       );
-      return;
-    }
-
-    if (request.method === "POST" && request.url === "/agent/planning/start") {
-      const body = await readRequestBody(request);
-      const startRequest = PlanningSessionStartRequestSchema.parse(JSON.parse(body));
-      const planningSession = await agentPlanner.startPlanningSession(startRequest);
-
-      response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify(planningSession));
-      return;
-    }
-
-    if (request.method === "POST" && request.url === "/agent/planning/complete") {
-      const body = await readRequestBody(request);
-      const completeRequest = PlanningSessionCompleteRequestSchema.parse(JSON.parse(body));
-      const planningResult = await agentPlanner.completePlanningSession(completeRequest);
-
-      response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify(planningResult));
       return;
     }
 
