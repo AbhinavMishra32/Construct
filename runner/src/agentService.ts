@@ -207,19 +207,63 @@ const NON_EMPTY_FILE_CONTENTS_SCHEMA = FILE_CONTENTS_SCHEMA.refine(
   }
 );
 
+const GENERATED_ANCHOR_DRAFT_SCHEMA = z.object({
+  file: z.string().min(1),
+  marker: z.string().min(1),
+  startLine: z.number().int().positive().nullable(),
+  endLine: z.number().int().positive().nullable()
+});
+
+const GENERATED_CHECK_OPTION_DRAFT_SCHEMA = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  rationale: z.string().min(1).nullable()
+});
+
+const GENERATED_COMPREHENSION_CHECK_DRAFT_SCHEMA = z.discriminatedUnion("type", [
+  z.object({
+    id: z.string().min(1),
+    type: z.literal("mcq"),
+    prompt: z.string().min(1),
+    options: z.array(GENERATED_CHECK_OPTION_DRAFT_SCHEMA).min(2),
+    answer: z.string().min(1)
+  }),
+  z.object({
+    id: z.string().min(1),
+    type: z.literal("short-answer"),
+    prompt: z.string().min(1),
+    rubric: z.array(z.string().min(1)).min(1),
+    placeholder: z.string().min(1).nullable()
+  })
+]);
+
+const GENERATED_BLUEPRINT_STEP_DRAFT_SCHEMA = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  doc: z.string().min(1),
+  anchor: GENERATED_ANCHOR_DRAFT_SCHEMA,
+  tests: z.array(z.string().min(1)).min(1),
+  concepts: z.array(z.string().min(1)).min(1),
+  constraints: z.array(z.string().min(1)),
+  checks: z.array(GENERATED_COMPREHENSION_CHECK_DRAFT_SCHEMA),
+  estimatedMinutes: z.number().int().positive(),
+  difficulty: z.enum(["intro", "core", "advanced"])
+});
+
 const GENERATED_BLUEPRINT_BUNDLE_DRAFT_SCHEMA = z.object({
   projectName: z.string().min(1),
   projectSlug: z.string().min(1),
   description: z.string().min(1),
   language: z.string().min(1),
   entrypoints: z.array(z.string().min(1)).min(1).max(5),
-  supportFiles: FILE_CONTENTS_SCHEMA.default({}),
+  supportFiles: FILE_CONTENTS_SCHEMA,
   canonicalFiles: NON_EMPTY_FILE_CONTENTS_SCHEMA,
   learnerFiles: NON_EMPTY_FILE_CONTENTS_SCHEMA,
   hiddenTests: NON_EMPTY_FILE_CONTENTS_SCHEMA,
-  steps: z.array(BlueprintStepSchema).min(1),
+  steps: z.array(GENERATED_BLUEPRINT_STEP_DRAFT_SCHEMA).min(1),
   dependencyGraph: DependencyGraphSchema,
-  tags: z.array(z.string().min(1)).default([])
+  tags: z.array(z.string().min(1))
 });
 
 const CONFIDENCE_OPTIONS = [
@@ -1015,7 +1059,7 @@ export class ConstructAgentService {
       language: draft.language,
       entrypoints: draft.entrypoints,
       files: draft.learnerFiles,
-      steps: draft.steps,
+      steps: normalizeGeneratedBlueprintSteps(draft.steps),
       dependencyGraph: draft.dependencyGraph,
       metadata: {
         createdBy: "Construct Architect agent",
@@ -1631,6 +1675,39 @@ function emptyKnowledgeBase(now: () => Date): UserKnowledgeBase {
     concepts: [],
     goals: []
   });
+}
+
+function normalizeGeneratedBlueprintSteps(
+  steps: Array<z.infer<typeof GENERATED_BLUEPRINT_STEP_DRAFT_SCHEMA>>
+): ProjectBlueprint["steps"] {
+  return steps.map((step) =>
+    BlueprintStepSchema.parse({
+      ...step,
+      anchor: {
+        file: step.anchor.file,
+        marker: step.anchor.marker,
+        ...(step.anchor.startLine === null ? {} : { startLine: step.anchor.startLine }),
+        ...(step.anchor.endLine === null ? {} : { endLine: step.anchor.endLine })
+      },
+      checks: step.checks.map((check) => {
+        if (check.type === "mcq") {
+          return {
+            ...check,
+            options: check.options.map((option) => ({
+              id: option.id,
+              label: option.label,
+              ...(option.rationale === null ? {} : { rationale: option.rationale })
+            }))
+          };
+        }
+
+        return {
+          ...check,
+          ...(check.placeholder === null ? {} : { placeholder: check.placeholder })
+        };
+      })
+    })
+  );
 }
 
 function slugify(value: string): string {

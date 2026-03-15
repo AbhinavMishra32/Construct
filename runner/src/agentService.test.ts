@@ -200,7 +200,9 @@ test("ConstructAgentService creates question and plan jobs and persists the resu
                 doc: "Start the project by defining the first real lexer behavior.",
                 anchor: {
                   file: "src/lexer.ts",
-                  marker: "TASK:lexer-tokenize"
+                  marker: "TASK:lexer-tokenize",
+                  startLine: null,
+                  endLine: null
                 },
                 tests: ["tests/lexer.test.ts"],
                 concepts: ["tokenization", "array mapping"],
@@ -213,11 +215,13 @@ test("ConstructAgentService creates question and plan jobs and persists the resu
                     options: [
                       {
                         id: "a",
-                        label: "The parser consumes tokens in sequence."
+                        label: "The parser consumes tokens in sequence.",
+                        rationale: null
                       },
                       {
                         id: "b",
-                        label: "It makes tests shorter."
+                        label: "It makes tests shorter.",
+                        rationale: null
                       }
                     ],
                     answer: "a"
