@@ -9,7 +9,8 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "validate:blueprint": "pnpm --filter @construct/shared validate:blueprint",
-    "verify:phase1": "pnpm validate:blueprint && pnpm --filter @construct/runner blueprint:test"
+    "verify:phase1": "pnpm validate:blueprint && pnpm --filter @construct/runner blueprint:test",
+    "verify:phase2": "pnpm --filter @construct/shared typecheck && pnpm verify:phase1 && pnpm --filter @construct/runner typecheck && pnpm --filter @construct/runner test"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

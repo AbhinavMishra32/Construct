@@ -6,12 +6,13 @@ The repository currently includes:
 
 - Phase 0 scaffold for the Electron app, runner, and shared package workspace.
 - Phase 1 shared schemas and a canonical sample workflow runtime project.
+- Phase 2 workspace file management and internal snapshot services.
 - A stored implementation ledger at `docs/implementation-ledger.md`.
 
 ## Workspace
 
 - `app`: Electron main, preload, and React renderer.
-- `runner`: local runner service and blueprint test harness.
+- `runner`: local runner service, workspace file manager, snapshot service, and blueprint test harness.
 - `pkg/shared`: shared schemas and types.
 - `blueprints/workflow-runtime`: canonical workflow runtime and initial blueprint metadata.
 
@@ -21,4 +22,5 @@ The repository currently includes:
 pnpm install
 pnpm dev
 pnpm verify:phase1
+pnpm verify:phase2
 ```

@@ -6,7 +6,7 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.
 const blueprintRoot = path.join(rootDir, "blueprints", "workflow-runtime");
 const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
-const child = spawn(command, ["test", "--", "--runInBand"], {
+const child = spawn(command, ["test"], {
   cwd: blueprintRoot,
   stdio: "inherit"
 });
