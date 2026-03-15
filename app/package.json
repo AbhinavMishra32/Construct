@@ -16,7 +16,9 @@
     "test": "node -e \"console.log('App tests are not implemented yet.')\""
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "framer-motion": "^12.4.2",
+    "monaco-editor": "^0.52.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -37,4 +39,3 @@
     "wait-on": "^8.0.3"
   }
 }
-

@@ -17,3 +17,28 @@ body {
   box-sizing: border-box;
 }
 
+#root {
+  min-height: 100vh;
+}
+
+.construct-anchor-line {
+  background: linear-gradient(90deg, rgba(20, 184, 166, 0.16), transparent 82%);
+  border-top: 1px solid rgba(45, 212, 191, 0.28);
+  border-bottom: 1px solid rgba(45, 212, 191, 0.18);
+}
+
+.construct-anchor-inline {
+  background-color: rgba(45, 212, 191, 0.2);
+  border-radius: 4px;
+}
+
+.construct-anchor-margin {
+  border-left: 3px solid rgba(45, 212, 191, 0.88);
+}
+
+.construct-anchor-glyph {
+  background: linear-gradient(180deg, rgba(45, 212, 191, 0.95), rgba(14, 116, 144, 0.95));
+  border-radius: 999px;
+  margin-left: 4px;
+  width: 8px !important;
+}

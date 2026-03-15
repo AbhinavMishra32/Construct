@@ -1,0 +1,126 @@
+export type RuntimeInfo = {
+  name: string;
+  electron: string;
+  node: string;
+  chrome: string;
+  platform: string;
+};
+
+export type RunnerHealth = {
+  status: string;
+  service: string;
+  port: number;
+};
+
+export type WorkspaceFileEntry = {
+  path: string;
+  kind: "file" | "directory";
+  size: number;
+};
+
+export type CheckOption = {
+  id: string;
+  label: string;
+  rationale?: string;
+};
+
+export type ComprehensionCheck =
+  | {
+      id: string;
+      type: "mcq";
+      prompt: string;
+      options: CheckOption[];
+      answer: string;
+    }
+  | {
+      id: string;
+      type: "short-answer";
+      prompt: string;
+      rubric: string[];
+      placeholder?: string;
+    };
+
+export type BlueprintStep = {
+  id: string;
+  title: string;
+  summary: string;
+  doc: string;
+  anchor: {
+    file: string;
+    marker: string;
+    startLine?: number;
+    endLine?: number;
+  };
+  tests: string[];
+  concepts: string[];
+  constraints: string[];
+  checks: ComprehensionCheck[];
+  estimatedMinutes: number;
+  difficulty: "intro" | "core" | "advanced";
+};
+
+export type DependencyNode = {
+  id: string;
+  label: string;
+  kind: "component" | "skill";
+};
+
+export type DependencyEdge = {
+  from: string;
+  to: string;
+  reason: string;
+};
+
+export type ProjectBlueprint = {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  projectRoot: string;
+  sourceProjectRoot: string;
+  language: string;
+  entrypoints: string[];
+  files: Record<string, string>;
+  steps: BlueprintStep[];
+  dependencyGraph: {
+    nodes: DependencyNode[];
+    edges: DependencyEdge[];
+  };
+  metadata: {
+    createdBy: string;
+    createdAt: string;
+    targetLanguage: string;
+    tags: string[];
+  };
+};
+
+export type BlueprintEnvelope = {
+  blueprint: ProjectBlueprint;
+  workspaceRoot: string;
+};
+
+export type WorkspaceFilesEnvelope = {
+  root: string;
+  files: WorkspaceFileEntry[];
+};
+
+export type WorkspaceFileEnvelope = {
+  path: string;
+  content: string;
+};
+
+export type TreeNode = {
+  name: string;
+  path: string;
+  kind: "file" | "directory";
+  size: number;
+  children: TreeNode[];
+};
+
+export type AnchorLocation = {
+  marker: string;
+  lineNumber: number;
+  startColumn: number;
+  endColumn: number;
+};
+

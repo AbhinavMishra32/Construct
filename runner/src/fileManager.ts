@@ -9,6 +9,8 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
+import type { WorkspaceFileEntry } from "@construct/shared";
+
 const DEFAULT_IGNORED_DIRECTORIES = new Set([
   ".construct",
   ".git",
@@ -17,12 +19,6 @@ const DEFAULT_IGNORED_DIRECTORIES = new Set([
   "dist",
   "node_modules"
 ]);
-
-export interface WorkspaceFileEntry {
-  path: string;
-  kind: "file" | "directory";
-  size: number;
-}
 
 export class WorkspacePathError extends Error {
   constructor(message: string) {
@@ -233,4 +229,3 @@ function isMissingPathError(error: unknown): boolean {
     (error as { code?: string }).code === "ENOENT"
   );
 }
-

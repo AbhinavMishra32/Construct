@@ -2,7 +2,8 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "types": [
-      "node"
+      "node",
+      "vite/client"
     ]
   },
   "include": [
@@ -13,4 +14,3 @@
     "tsup.config.ts"
   ]
 }
-

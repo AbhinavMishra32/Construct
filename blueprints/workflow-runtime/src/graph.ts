@@ -28,7 +28,7 @@ export class WorkflowGraph {
   }
 
   next(currentId: string, state: WorkflowState): string | undefined {
+    // TASK:graph-next
     return pickNextEdge(this.edges, currentId, state)?.to;
   }
 }
-

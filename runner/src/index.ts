@@ -1,11 +1,29 @@
 import http from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { APP_NAME, BlueprintTaskRequestSchema } from "@construct/shared";
 
-import { BlueprintResolutionError, TestRunnerManager } from "./testRunner";
+import { WorkspaceFileManager } from "./fileManager";
+import {
+  BlueprintResolutionError,
+  TestRunnerManager,
+  loadBlueprint
+} from "./testRunner";
 
 const port = Number(process.env.CONSTRUCT_RUNNER_PORT ?? 43110);
 const testRunner = new TestRunnerManager();
+const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const defaultBlueprintPath = path.join(
+  rootDir,
+  "blueprints",
+  "workflow-runtime",
+  "project-blueprint.json"
+);
+const workspaceRoot = path.dirname(defaultBlueprintPath);
+const workspaceFileManager = new WorkspaceFileManager(workspaceRoot, {
+  ignoredDirectories: ["test-fixtures"]
+});
 
 const server = http.createServer(async (request, response) => {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -26,6 +44,68 @@ const server = http.createServer(async (request, response) => {
           status: "ready",
           service: `${APP_NAME} Runner`,
           port
+        })
+      );
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/blueprint/current") {
+      const blueprint = await loadBlueprint(defaultBlueprintPath);
+
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify({
+          blueprint,
+          workspaceRoot
+        })
+      );
+      return;
+    }
+
+    if (request.method === "GET" && request.url?.startsWith("/workspace/files")) {
+      const files = await workspaceFileManager.listFiles();
+
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify({
+          root: workspaceRoot,
+          files
+        })
+      );
+      return;
+    }
+
+    if (request.method === "GET" && request.url?.startsWith("/workspace/file")) {
+      const relativePath = getRequiredQueryParam(request.url, "path");
+      const content = await workspaceFileManager.readFile(relativePath);
+
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify({
+          path: relativePath,
+          content
+        })
+      );
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/workspace/file") {
+      const body = JSON.parse(await readRequestBody(request)) as {
+        path?: string;
+        content?: string;
+      };
+
+      if (typeof body.path !== "string" || typeof body.content !== "string") {
+        throw new Error("A workspace path and string content are required.");
+      }
+
+      await workspaceFileManager.writeFile(body.path, body.content);
+
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify({
+          ok: true,
+          path: body.path
         })
       );
       return;
@@ -77,4 +157,15 @@ async function readRequestBody(request: http.IncomingMessage): Promise<string> {
     });
     request.on("error", reject);
   });
+}
+
+function getRequiredQueryParam(requestUrl: string, key: string): string {
+  const url = new URL(requestUrl, "http://127.0.0.1");
+  const value = url.searchParams.get(key);
+
+  if (!value) {
+    throw new Error(`Missing query parameter: ${key}.`);
+  }
+
+  return value;
 }

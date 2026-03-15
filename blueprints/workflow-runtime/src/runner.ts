@@ -10,6 +10,7 @@ export async function runWorkflow(
   graph: WorkflowGraph,
   initialState: WorkflowState
 ): Promise<RunResult> {
+  // TASK:runner-loop
   const visited: string[] = [];
   let currentNodeId: string | undefined = graph.start;
   let state = initialState;
@@ -30,4 +31,3 @@ export async function runWorkflow(
     visited
   };
 }
-

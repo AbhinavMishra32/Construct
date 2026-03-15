@@ -11,7 +11,8 @@
     "validate:blueprint": "pnpm --filter @construct/shared validate:blueprint",
     "verify:phase1": "pnpm validate:blueprint && pnpm --filter @construct/runner blueprint:test",
     "verify:phase2": "pnpm --filter @construct/shared typecheck && pnpm verify:phase1 && pnpm --filter @construct/runner typecheck && pnpm --filter @construct/runner test",
-    "verify:phase3": "pnpm verify:phase2 && pnpm --filter @construct/shared build && pnpm --filter @construct/runner build && pnpm --filter @construct/runner task:test"
+    "verify:phase3": "pnpm verify:phase2 && pnpm --filter @construct/shared build && pnpm --filter @construct/runner build && pnpm --filter @construct/runner task:test",
+    "verify:phase4": "pnpm verify:phase3 && pnpm --filter @construct/app typecheck && pnpm --filter @construct/app build"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

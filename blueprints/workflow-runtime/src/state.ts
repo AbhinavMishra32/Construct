@@ -7,6 +7,7 @@ export interface StatePatch {
 }
 
 export function mergeState(state: WorkflowState, patch: StatePatch): WorkflowState {
+  // TASK:state-merge
   return {
     value: patch.value ?? state.value,
     history: patch.historyEntry ? [...state.history, patch.historyEntry] : [...state.history],
@@ -16,4 +17,3 @@ export function mergeState(state: WorkflowState, patch: StatePatch): WorkflowSta
     }
   };
 }
-

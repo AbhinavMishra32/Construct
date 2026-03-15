@@ -9,6 +9,12 @@ export const AnchorSchema = z.object({
   endLine: z.number().int().positive().optional()
 });
 
+export const WorkspaceFileEntrySchema = z.object({
+  path: z.string().min(1),
+  kind: z.enum(["file", "directory"]),
+  size: z.number().int().nonnegative()
+});
+
 export const CheckOptionSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
@@ -151,6 +157,7 @@ export const PlanMutationSchema = z.object({
 });
 
 export type AnchorRef = z.infer<typeof AnchorSchema>;
+export type WorkspaceFileEntry = z.infer<typeof WorkspaceFileEntrySchema>;
 export type ComprehensionCheck = z.infer<typeof ComprehensionCheckSchema>;
 export type BlueprintStep = z.infer<typeof BlueprintStepSchema>;
 export type ProjectBlueprint = z.infer<typeof ProjectBlueprintSchema>;
