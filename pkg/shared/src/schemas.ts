@@ -38,6 +38,33 @@ export const ComprehensionCheckSchema = z.discriminatedUnion("type", [
   })
 ]);
 
+export const CheckReviewStatusSchema = z.enum([
+  "complete",
+  "needs-revision",
+  "skipped"
+]);
+
+export const CheckReviewSchema = z.object({
+  status: CheckReviewStatusSchema,
+  message: z.string().min(1),
+  coveredCriteria: z.array(z.string().min(1)).default([]),
+  missingCriteria: z.array(z.string().min(1)).default([])
+});
+
+export const CheckReviewRequestSchema = z.object({
+  stepId: z.string().min(1),
+  stepTitle: z.string().min(1),
+  stepSummary: z.string().min(1),
+  concepts: z.array(z.string().min(1)).default([]),
+  check: ComprehensionCheckSchema,
+  response: z.string().min(1),
+  attemptCount: z.number().int().nonnegative().default(0)
+});
+
+export const CheckReviewResponseSchema = z.object({
+  review: CheckReviewSchema
+});
+
 export const BlueprintStepSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
@@ -295,6 +322,9 @@ export const PlanMutationSchema = z.object({
 export type AnchorRef = z.infer<typeof AnchorSchema>;
 export type WorkspaceFileEntry = z.infer<typeof WorkspaceFileEntrySchema>;
 export type ComprehensionCheck = z.infer<typeof ComprehensionCheckSchema>;
+export type CheckReview = z.infer<typeof CheckReviewSchema>;
+export type CheckReviewRequest = z.infer<typeof CheckReviewRequestSchema>;
+export type CheckReviewResponse = z.infer<typeof CheckReviewResponseSchema>;
 export type BlueprintStep = z.infer<typeof BlueprintStepSchema>;
 export type ProjectBlueprint = z.infer<typeof ProjectBlueprintSchema>;
 export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;

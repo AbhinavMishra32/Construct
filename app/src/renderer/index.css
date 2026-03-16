@@ -570,12 +570,38 @@ textarea {
 
 .construct-floating-card-meta {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   color: var(--text-muted);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.12em;
+}
+
+.construct-floating-card-meta-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.construct-guide-minimize-button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-bg) 88%, transparent);
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.construct-guide-minimize-button:hover {
+  background: var(--panel-muted);
+  color: var(--text);
 }
 
 .construct-floating-card-title {
@@ -600,6 +626,55 @@ textarea {
   flex-direction: column;
   gap: 12px;
   background: color-mix(in srgb, var(--panel-bg) 94%, transparent);
+}
+
+.construct-floating-card.is-minimized {
+  top: auto;
+  bottom: 56px;
+  right: 18px;
+  width: auto;
+  max-height: none;
+  min-height: 0;
+  border-radius: 999px;
+  overflow: visible;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.construct-floating-card-minibar {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 96%, transparent);
+  background: color-mix(in srgb, var(--panel-bg) 94%, transparent);
+  box-shadow: 0 12px 28px color-mix(in srgb, var(--text) 10%, transparent);
+  backdrop-filter: blur(18px);
+  color: var(--text);
+}
+
+.construct-floating-card-minibar:hover {
+  background: color-mix(in srgb, var(--panel-bg) 98%, transparent);
+}
+
+.construct-floating-card-minibar strong {
+  font-size: 13px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.construct-floating-card-minibar-kicker,
+.construct-floating-card-minibar-meta {
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .construct-metadata-panel,
@@ -3267,11 +3342,172 @@ textarea {
   letter-spacing: -0.02em;
 }
 
+.construct-home-knowledge-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.construct-home-knowledge-summary strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
 .construct-home-inline-note {
   padding-top: 2px;
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.65;
+}
+
+.construct-home-knowledge-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.construct-knowledge-node {
+  --depth: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-left: calc(var(--depth) * 14px);
+}
+
+.construct-knowledge-node-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  padding: 12px 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-bg) 94%, transparent);
+}
+
+.construct-knowledge-node-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.construct-knowledge-node-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.construct-knowledge-node-head strong {
+  font-size: 14px;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+
+.construct-knowledge-node-category {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-soft);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.construct-knowledge-node-subhead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.construct-knowledge-node-subhead span:first-child {
+  font-family: var(--font-mono);
+}
+
+.construct-knowledge-node-copy > p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.construct-knowledge-node-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.construct-knowledge-node-source {
+  color: var(--text);
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.construct-knowledge-node-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.construct-knowledge-score {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-muted) 82%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.construct-knowledge-score.is-strong {
+  color: var(--success);
+}
+
+.construct-knowledge-score.is-developing {
+  color: var(--warning);
+}
+
+.construct-knowledge-score.is-needs-support {
+  color: var(--text-soft);
+}
+
+.construct-knowledge-node-children {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+}
+
+.construct-knowledge-node-children::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--border);
 }
 
 .construct-home-surface-actions {
@@ -3433,6 +3669,15 @@ textarea {
   .construct-home-signal-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .construct-knowledge-node-row {
+    grid-template-columns: 1fr;
+  }
+
+  .construct-knowledge-node-meta {
+    align-items: flex-start;
+    white-space: normal;
   }
 }
 

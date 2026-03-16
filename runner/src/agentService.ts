@@ -13,9 +13,11 @@ import {
   AgentEventSchema,
   AgentJobCreatedResponseSchema,
   AgentJobSnapshotSchema,
+  CheckReviewResponseSchema,
   BlueprintStepSchema,
   BlueprintDeepDiveRequestSchema,
   BlueprintDeepDiveResponseSchema,
+  ComprehensionCheckSchema,
   CurrentPlanningSessionResponseSchema,
   DependencyGraphSchema,
   GeneratedProjectPlanSchema,
@@ -32,15 +34,17 @@ import {
   ProjectsDashboardResponseSchema,
   RuntimeGuideRequestSchema,
   RuntimeGuideResponseSchema,
-  UserKnowledgeBaseSchema,
   type AgentEvent,
   type AgentJobCreatedResponse,
   type AgentJobKind,
   type AgentJobSnapshot,
   type ArchitectureComponent,
+  type CheckReviewRequest,
+  type CheckReviewResponse,
   type BlueprintDeepDiveRequest,
   type BlueprintDeepDiveResponse,
   type ConceptConfidence,
+  type ComprehensionCheck,
   type GeneratedProjectPlan,
   type KnowledgeGraph,
   type LearnerModel,
@@ -58,7 +62,7 @@ import {
   type RuntimeGuideRequest,
   type RuntimeGuideResponse,
   type StoredKnowledgeConcept,
-  type StoredKnowledgeGoal,
+  type TaskTelemetry,
   type UserKnowledgeBase
 } from "@construct/shared";
 import { tavily } from "@tavily/core";
@@ -73,6 +77,16 @@ import {
   getActiveBlueprintPath as getActiveBlueprintPathFromFile,
   setActiveBlueprintPath
 } from "./activeBlueprint";
+import {
+  applyKnowledgeSignals,
+  confidenceToScore,
+  createEmptyKnowledgeBase,
+  flattenKnowledgeConcepts,
+  getKnowledgeConceptLabelPath,
+  serializeKnowledgeBaseForPrompt,
+  summarizeKnowledgeBase,
+  taskOutcomeToScore
+} from "./knowledgeGraph";
 import { loadBlueprint } from "./testRunner";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
@@ -410,6 +424,13 @@ const GENERATED_DEEP_DIVE_DRAFT_SCHEMA = z.object({
   constraints: z.array(z.string().min(1)).max(4).default([])
 });
 
+const SHORT_ANSWER_CHECK_REVIEW_DRAFT_SCHEMA = z.object({
+  status: z.enum(["complete", "needs-revision"]),
+  message: z.string().min(1),
+  coveredCriteria: z.array(z.string().min(1)).default([]),
+  missingCriteria: z.array(z.string().min(1)).default([])
+});
+
 type GeneratedBlueprintBundleDraft = z.infer<typeof GENERATED_BLUEPRINT_BUNDLE_DRAFT_SCHEMA>;
 type GeneratedBlueprintStepDraft = z.infer<typeof GENERATED_BLUEPRINT_STEP_DRAFT_SCHEMA>;
 
@@ -470,6 +491,7 @@ export class ConstructAgentService {
     return LearnerProfileResponseSchema.parse({
       userId: getCurrentUserId(),
       knowledgeBase,
+      knowledgeStats: summarizeKnowledgeBase(knowledgeBase),
       learnerModel
     });
   }
@@ -558,6 +580,7 @@ export class ConstructAgentService {
     stepId: string;
     markStepCompleted?: boolean;
     lastAttemptStatus?: "failed" | "passed" | "needs-review" | null;
+    telemetry?: TaskTelemetry | null;
   }): Promise<void> {
     const blueprint = await loadBlueprint(input.canonicalBlueprintPath);
     const stepIndex = blueprint.steps.findIndex((step) => step.id === input.stepId);
@@ -576,6 +599,171 @@ export class ConstructAgentService {
       markStepCompleted: input.markStepCompleted,
       lastAttemptStatus: input.lastAttemptStatus ?? null
     });
+
+    if (input.lastAttemptStatus && input.telemetry) {
+      await this.recordTaskKnowledgeSignal({
+        step,
+        status: input.lastAttemptStatus,
+        telemetry: input.telemetry
+      });
+    }
+  }
+
+  async reviewCheck(input: CheckReviewRequest): Promise<CheckReviewResponse> {
+    const review =
+      input.check.type === "mcq"
+        ? this.reviewMultipleChoiceCheck(input.check, input.response)
+        : await this.reviewShortAnswerCheck(input);
+
+    await this.recordCheckKnowledgeSignal({
+      concepts: input.concepts,
+      check: input.check,
+      review: review.review,
+      attemptCount: input.attemptCount
+    });
+
+    return CheckReviewResponseSchema.parse(review);
+  }
+
+  private reviewMultipleChoiceCheck(
+    check: Extract<ComprehensionCheck, { type: "mcq" }>,
+    response: string
+  ): CheckReviewResponse {
+    const isCorrect = response.trim() === check.answer;
+    const selected = check.options.find((option) => option.id === response.trim()) ?? null;
+
+    return {
+      review: {
+        status: isCorrect ? "complete" : "needs-revision",
+        message: isCorrect
+          ? "Correct. You picked the option that matches the taught concept."
+          : selected
+            ? `Not quite. "${selected.label}" misses the core behavior this step depends on.`
+            : "Select the option that best matches the behavior explained in the lesson.",
+        coveredCriteria: isCorrect ? [check.answer] : [],
+        missingCriteria: isCorrect
+          ? []
+          : ["Choose the option that matches the concept explained in the lesson."]
+      }
+    };
+  }
+
+  private async reviewShortAnswerCheck(
+    input: CheckReviewRequest
+  ): Promise<CheckReviewResponse> {
+    const draft = await this.getLlm().parse({
+      schema: SHORT_ANSWER_CHECK_REVIEW_DRAFT_SCHEMA,
+      schemaName: "construct_short_answer_check_review",
+      instructions: buildShortAnswerCheckReviewInstructions(),
+      prompt: JSON.stringify(
+        {
+          stepId: input.stepId,
+          stepTitle: input.stepTitle,
+          stepSummary: input.stepSummary,
+          concepts: input.concepts,
+          check: input.check,
+          learnerAnswer: input.response
+        },
+        null,
+        2
+      ),
+      maxOutputTokens: 900,
+      verbosity: "low"
+    });
+
+    return CheckReviewResponseSchema.parse({
+      review: draft
+    });
+  }
+
+  private async recordTaskKnowledgeSignal(input: {
+    step: ProjectBlueprint["steps"][number];
+    status: "failed" | "passed" | "needs-review";
+    telemetry: TaskTelemetry;
+  }): Promise<void> {
+    const knowledgeBase = await this.readKnowledgeBase();
+    const timestamp = this.now().toISOString();
+    const score = taskOutcomeToScore({
+      status: input.status,
+      hintsUsed: input.telemetry.hintsUsed,
+      pasteRatio: input.telemetry.pasteRatio
+    });
+    const signals = this.buildSignalsForConceptIds(
+      knowledgeBase,
+      input.step.concepts,
+      {
+        score,
+        source: "task-performance",
+        recordedAt: timestamp,
+        rationale: `${input.step.title}: ${input.status} with hints=${input.telemetry.hintsUsed}, pasteRatio=${input.telemetry.pasteRatio.toFixed(2)}.`
+      }
+    );
+
+    if (signals.length === 0) {
+      return;
+    }
+
+    await this.persistence.setKnowledgeBase(applyKnowledgeSignals(knowledgeBase, signals));
+  }
+
+  private async recordCheckKnowledgeSignal(input: {
+    concepts: string[];
+    check: ComprehensionCheck;
+    review: CheckReviewResponse["review"];
+    attemptCount: number;
+  }): Promise<void> {
+    const knowledgeBase = await this.readKnowledgeBase();
+    const timestamp = this.now().toISOString();
+    const score = input.review.status === "complete"
+      ? Math.max(58, 80 - input.attemptCount * 6)
+      : Math.max(18, 42 - input.attemptCount * 4);
+    const signals = this.buildSignalsForConceptIds(
+      knowledgeBase,
+      input.concepts,
+      {
+        score,
+        source: "quiz-review",
+        recordedAt: timestamp,
+        rationale: `${input.check.prompt} ${input.review.message}`
+      }
+    );
+
+    if (signals.length === 0) {
+      return;
+    }
+
+    await this.persistence.setKnowledgeBase(applyKnowledgeSignals(knowledgeBase, signals));
+  }
+
+  private buildSignalsForConceptIds(
+    knowledgeBase: UserKnowledgeBase,
+    conceptIds: string[],
+    input: {
+      score: number;
+      source: "self-report" | "agent-inferred" | "task-performance" | "quiz-review" | "runtime-guide";
+      recordedAt: string;
+      rationale: string;
+    }
+  ) {
+    const flattened = flattenKnowledgeConcepts(knowledgeBase.concepts);
+    const existingConcepts = new Map(flattened.map((concept) => [concept.id, concept]));
+
+    return Array.from(new Set(conceptIds))
+      .filter(Boolean)
+      .map((conceptId) => {
+        const existing = existingConcepts.get(conceptId);
+
+        return {
+          conceptId,
+          label: existing?.label ?? labelForConceptId(conceptId),
+          category: existing?.category ?? inferKnowledgeCategory(conceptId),
+          score: input.score,
+          rationale: input.rationale,
+          source: input.source,
+          recordedAt: input.recordedAt,
+          labelPath: getKnowledgeConceptLabelPath(knowledgeBase.concepts, conceptId) ?? undefined
+        };
+      });
   }
 
   private getLlm(): StructuredLanguageModel {
@@ -1034,7 +1222,7 @@ export class ConstructAgentService {
                   goal: state.request.goal,
                   goalScope: state.goalScope,
                   learningStyle: state.request.learningStyle,
-                  priorKnowledge: compactKnowledgeBase(state.knowledgeBase),
+                  priorKnowledge: serializeKnowledgeBaseForPrompt(state.knowledgeBase),
                   research: compactResearchDigest(state.mergedResearch)
                 },
                 null,
@@ -1064,7 +1252,7 @@ export class ConstructAgentService {
     const result = await graph.invoke({
       jobId,
       request,
-      knowledgeBase: emptyKnowledgeBase(this.now),
+      knowledgeBase: createEmptyKnowledgeBase(this.now().toISOString()),
       goalScope: null,
       projectShapeResearch: null,
       prerequisiteResearch: null,
@@ -1188,7 +1376,7 @@ export class ConstructAgentService {
                   session: state.session,
                   goalScope: state.goalScope,
                   answers: resolvedAnswers,
-                  priorKnowledge: compactKnowledgeBase(state.knowledgeBase),
+                  priorKnowledge: serializeKnowledgeBaseForPrompt(state.knowledgeBase),
                   research: compactResearchDigest(state.mergedResearch)
                 },
                 null,
@@ -1205,7 +1393,12 @@ export class ConstructAgentService {
               session: state.session,
               plan
             });
-            await this.mergeKnowledgeBase(state.knowledgeBase, state.session, plan);
+            await this.mergeKnowledgeBase(
+              state.knowledgeBase,
+              state.session,
+              plan,
+              resolvedAnswers
+            );
 
             return plan;
           } finally {
@@ -1259,7 +1452,7 @@ export class ConstructAgentService {
                 goalScope: state.goalScope,
                 answers: resolvedAnswers,
                 plan: state.plan,
-                priorKnowledge: compactKnowledgeBase(state.knowledgeBase),
+                priorKnowledge: serializeKnowledgeBaseForPrompt(state.knowledgeBase),
                 research: compactResearchDigest(state.mergedResearch)
               },
               null,
@@ -1381,7 +1574,7 @@ export class ConstructAgentService {
                   goalScope: state.goalScope,
                   answers: resolvedAnswers,
                   plan: state.plan,
-                  priorKnowledge: compactKnowledgeBase(state.knowledgeBase),
+                  priorKnowledge: serializeKnowledgeBaseForPrompt(state.knowledgeBase),
                   research: compactResearchDigest(state.mergedResearch),
                   currentStep: step,
                   lessonAuthoringBrief: buildLessonAuthoringBrief(step, stepIndex, state.blueprintDraft.steps.length)
@@ -1465,7 +1658,7 @@ export class ConstructAgentService {
       jobId,
       request,
       session,
-      knowledgeBase: emptyKnowledgeBase(this.now),
+      knowledgeBase: createEmptyKnowledgeBase(this.now().toISOString()),
       goalScope: null,
       architectureResearch: null,
       dependencyResearch: null,
@@ -1515,7 +1708,7 @@ export class ConstructAgentService {
               prompt: JSON.stringify(
                 {
                   request: state.request,
-                  priorKnowledge: compactKnowledgeBase(state.knowledgeBase)
+                  priorKnowledge: serializeKnowledgeBaseForPrompt(state.knowledgeBase)
                 },
                 null,
                 2
@@ -1537,7 +1730,7 @@ export class ConstructAgentService {
     const result = await graph.invoke({
       jobId,
       request,
-      knowledgeBase: emptyKnowledgeBase(this.now),
+      knowledgeBase: createEmptyKnowledgeBase(this.now().toISOString()),
       guide: null
     });
 
@@ -1605,7 +1798,7 @@ export class ConstructAgentService {
                       : state.currentStep
                         ? [state.currentStep.doc]
                         : [],
-                  priorKnowledge: compactKnowledgeBase(state.knowledgeBase)
+                  priorKnowledge: serializeKnowledgeBaseForPrompt(state.knowledgeBase)
                 },
                 null,
                 2
@@ -1690,7 +1883,7 @@ export class ConstructAgentService {
     const result = await graph.invoke({
       jobId,
       request,
-      knowledgeBase: emptyKnowledgeBase(this.now),
+      knowledgeBase: createEmptyKnowledgeBase(this.now().toISOString()),
       canonicalBlueprint: null,
       learnerBlueprint: null,
       currentStep: null,
@@ -2271,48 +2464,78 @@ export class ConstructAgentService {
   }
 
   private async readKnowledgeBase(): Promise<UserKnowledgeBase> {
-    return (await this.persistence.getKnowledgeBase()) ?? emptyKnowledgeBase(this.now);
+    return (await this.persistence.getKnowledgeBase()) ?? createEmptyKnowledgeBase(this.now().toISOString());
   }
 
   private async mergeKnowledgeBase(
     current: UserKnowledgeBase,
     session: PlanningSession,
-    plan: GeneratedProjectPlan
+    plan: GeneratedProjectPlan,
+    resolvedAnswers: ResolvedPlanningAnswer[]
   ): Promise<void> {
-    const conceptMap = new Map(current.concepts.map((concept) => [concept.id, concept]));
     const timestamp = this.now().toISOString();
-
-    for (const concept of plan.knowledgeGraph.concepts) {
-      conceptMap.set(concept.id, {
-        id: concept.id,
-        label: concept.label,
-        category: concept.category,
-        confidence: concept.confidence,
-        rationale: concept.rationale,
-        source: "self-report",
-        updatedAt: timestamp
-      });
-    }
-
-    const goals = current.goals.filter((goal) => goal.goal !== session.goal);
-    goals.unshift({
+    const goal = {
       goal: session.goal,
       language: session.detectedLanguage,
       domain: session.detectedDomain,
       lastPlannedAt: timestamp
+    };
+
+    const answerSignals = resolvedAnswers.flatMap((answer) => {
+      if (answer.selectedOption) {
+        return [
+          {
+            conceptId: answer.conceptId,
+            label: answer.prompt,
+            category: answer.category,
+            score: confidenceToScore(answer.selectedOption.confidenceSignal),
+            rationale: `${answer.prompt} Answered: ${answer.selectedOption.label}. ${answer.selectedOption.description}`,
+            source: "self-report" as const,
+            recordedAt: timestamp
+          }
+        ];
+      }
+
+      if (!answer.customResponse) {
+        return [];
+      }
+
+      return [
+        {
+          conceptId: answer.conceptId,
+          label: answer.prompt,
+          category: answer.category,
+          score: scoreCustomSelfReport(answer.customResponse),
+          rationale: `${answer.prompt} Learner described their experience in their own words: ${answer.customResponse}`,
+          source: "self-report" as const,
+          recordedAt: timestamp,
+          labelPath: getKnowledgeConceptLabelPath(current.concepts, answer.conceptId) ?? undefined
+        }
+      ];
     });
 
-    const nextKnowledgeBase = UserKnowledgeBaseSchema.parse({
-      updatedAt: timestamp,
-      concepts: Array.from(conceptMap.values()),
-      goals: goals.slice(0, 25)
-    });
+    const planSignals = plan.knowledgeGraph.concepts.map((concept) => ({
+      conceptId: concept.id,
+      label: concept.label,
+      category: concept.category,
+      score: concept.masteryScore ?? confidenceToScore(concept.confidence ?? "shaky"),
+      rationale: concept.rationale,
+      source: "agent-inferred" as const,
+      recordedAt: timestamp,
+      labelPath: concept.labelPath
+    }));
+
+    const nextKnowledgeBase = applyKnowledgeSignals(
+      current,
+      [...planSignals, ...answerSignals],
+      { goal }
+    );
 
     await this.persistence.setKnowledgeBase(nextKnowledgeBase);
     this.logger.info("Merged planning signals into learner knowledge base.", {
       sessionId: session.sessionId,
       goal: session.goal,
-      conceptCount: nextKnowledgeBase.concepts.length,
+      conceptCount: countKnowledgeConceptNodes(nextKnowledgeBase.concepts),
       goalCount: nextKnowledgeBase.goals.length
     });
   }
@@ -3113,39 +3336,87 @@ function fileEntriesToRecord(
   return record;
 }
 
-function compactKnowledgeBase(knowledgeBase: UserKnowledgeBase): {
-  updatedAt: string;
-  concepts: Array<Pick<
-    StoredKnowledgeConcept,
-    "id" | "label" | "category" | "confidence" | "rationale" | "updatedAt"
-  >>;
-  goals: Array<Pick<StoredKnowledgeGoal, "goal" | "language" | "domain" | "lastPlannedAt">>;
-} {
-  return {
-    updatedAt: knowledgeBase.updatedAt,
-    concepts: knowledgeBase.concepts
-      .slice()
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .slice(0, 20)
-      .map((concept) => ({
-        id: concept.id,
-        label: concept.label,
-        category: concept.category,
-        confidence: concept.confidence,
-        rationale: truncateText(concept.rationale, 220),
-        updatedAt: concept.updatedAt
-      })),
-    goals: knowledgeBase.goals
-      .slice()
-      .sort((left, right) => right.lastPlannedAt.localeCompare(left.lastPlannedAt))
-      .slice(0, 10)
-      .map((goal) => ({
-        goal: truncateText(goal.goal, 180),
-        language: goal.language,
-        domain: goal.domain,
-        lastPlannedAt: goal.lastPlannedAt
-      }))
-  };
+function countKnowledgeConceptNodes(concepts: StoredKnowledgeConcept[]): number {
+  return concepts.reduce(
+    (total, concept) => total + 1 + countKnowledgeConceptNodes(concept.children),
+    0
+  );
+}
+
+function scoreCustomSelfReport(response: string): number {
+  const normalized = response.toLowerCase();
+
+  if (
+    /\b(from scratch|brand new|completely new|total beginner|beginner|never used|don't know|do not know)\b/.test(
+      normalized
+    )
+  ) {
+    return 26;
+  }
+
+  if (
+    /\b(struggle|stumble|fuzzy|unclear|confusing|need help|need guidance|not comfortable|weak)\b/.test(
+      normalized
+    )
+  ) {
+    return 42;
+  }
+
+  if (
+    /\b(comfortable|confident|used in production|have built|i know|experienced|solid)\b/.test(
+      normalized
+    )
+  ) {
+    return 76;
+  }
+
+  return 54;
+}
+
+function labelForConceptId(conceptId: string): string {
+  const segments = conceptId.split(".").filter(Boolean);
+  const leaf = segments[segments.length - 1] ?? conceptId;
+  return leaf
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+function inferKnowledgeCategory(conceptId: string): "language" | "domain" | "workflow" {
+  const root = conceptId.split(".")[0]?.toLowerCase() ?? "";
+
+  if ([
+    "rust",
+    "typescript",
+    "javascript",
+    "python",
+    "go",
+    "java",
+    "kotlin",
+    "swift",
+    "c",
+    "cpp",
+    "csharp"
+  ].includes(root)) {
+    return "language";
+  }
+
+  if ([
+    "workflow",
+    "tooling",
+    "testing",
+    "debugging",
+    "git",
+    "build",
+    "deploy",
+    "ci",
+    "editor"
+  ].includes(root)) {
+    return "workflow";
+  }
+
+  return "domain";
 }
 
 function mergeResearchDigests(query: string, digests: Array<ResearchDigest | null>): ResearchDigest {
@@ -3317,14 +3588,6 @@ function truncateText(value: string, maxLength: number): string {
   }
 
   return `${value.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
-}
-
-function emptyKnowledgeBase(now: () => Date): UserKnowledgeBase {
-  return UserKnowledgeBaseSchema.parse({
-    updatedAt: now().toISOString(),
-    concepts: [],
-    goals: []
-  });
 }
 
 function normalizeDraftLessonSlides(
@@ -3616,6 +3879,7 @@ function buildQuestionGenerationInstructions(): string {
     "You are Construct's Architect agent.",
     "Your job is to prepare the intake phase for a serious local AI developer IDE.",
     "Given a project goal, prior stored learner knowledge, and optional lightweight web research, generate project-tailoring intake questions.",
+    "priorKnowledge is a recursive concept graph. Parent topics roll up from child subtopics, so inspect the deepest relevant concepts before deciding what to ask.",
     "These are tailoring questions, not assessment questions and not quiz questions.",
     "Ask only the minimum questions needed to personalize the build path.",
     "The learner should feel like they are helping the Architect tune scope, pacing, depth, and support style for this exact project.",
@@ -3641,6 +3905,7 @@ function buildPlanGenerationInstructions(): string {
     "You are Construct's Architect agent.",
     "Generate a detailed personalized project roadmap for a serious learning-first IDE.",
     "The learner will build the real project in-place, so every step must contribute to the final system.",
+    "priorKnowledge is a recursive learner graph with nested concepts and sub-concepts. Use the deepest relevant weak or strong nodes, not just the top-level topic names.",
     "Use the learner's answers and prior knowledge to change step order, not just explanations.",
     "The answers payload includes the original question, the available options, and either a selected option or a custom freeform learner response. Use that full context rather than treating answers as generic scores.",
     "Architecture components must reflect true dependency order.",
@@ -3662,6 +3927,7 @@ function buildBlueprintGenerationInstructions(): string {
   return [
     "You are Construct's Architect agent.",
     "Generate a real project blueprint for the learner to implement in-place.",
+    "priorKnowledge is a recursive learner graph. Use the most relevant subtopics to decide how much to explain, which examples to choose, and where the learner will need hand-holding.",
     "Return a runnable canonical project split into supportFiles, canonicalFiles, learnerFiles, and hiddenTests.",
     "Each of those file groups must be an array of objects shaped exactly like { path, content }.",
     "supportFiles are unmasked project files such as package.json, pyproject.toml, tsconfig, helper modules, and fixed runtime scaffolding.",
@@ -3721,6 +3987,7 @@ function buildLessonAuthoringInstructions(context: {
     "You are in the lesson-authoring phase of project generation.",
     `You are authoring a single step chapter (${context.stepIndex + 1} of ${context.totalSteps}).`,
     "The project structure, learner files, hidden tests, anchors, and overall step order already exist.",
+    "priorKnowledge is a recursive learner graph with nested subtopics and scores. Match the lesson to the deepest relevant concept gaps or strengths, not only the parent label.",
     "Your job is to rewrite the step teaching content so this step reads like a serious docs chapter before the learner reaches checks or code.",
     "Return only the authored content for this single step: summary, doc, lessonSlides, and checks.",
     "The answers payload includes the original question, the available options, and either a selected option or a custom freeform learner response. Use that context to decide how much to explain, what examples to choose, and where to slow down.",
@@ -3778,6 +4045,22 @@ function buildBlueprintDeepDiveInstructions(): string {
     "The checks should verify the new explanation before the learner returns to the implementation.",
     "Use the failure count, hints used, revealed hints, task result, and prior knowledge to decide what to deepen.",
     "Assume the new slides and checks will be prepended to the existing step."
+  ].join("\n");
+}
+
+function buildShortAnswerCheckReviewInstructions(): string {
+  return [
+    "You are Construct's lesson review agent.",
+    "Review a learner's short-answer response for a concept check inside a teaching IDE.",
+    "Be semantically lenient and evaluate understanding, not wording similarity.",
+    "Use the rubric and the step context to decide whether the learner understood the concept well enough to continue.",
+    "Mark status complete only when the learner's answer demonstrates the core idea needed for the upcoming exercise.",
+    "If the answer is partially right but misses an essential concept, mark needs-revision.",
+    "Do not demand exact terminology when the underlying understanding is present.",
+    "Your message should sound like a tutor: clear, direct, and supportive.",
+    "coveredCriteria should contain the rubric ideas the learner did address.",
+    "missingCriteria should contain the rubric ideas still missing from the learner answer.",
+    "Never output skipped. Only output complete or needs-revision."
   ].join("\n");
 }
 

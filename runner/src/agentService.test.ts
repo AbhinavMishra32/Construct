@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import type { StoredKnowledgeConcept } from "@construct/shared";
+
 import { ConstructAgentService } from "./agentService";
+import { findKnowledgeConcept } from "./knowledgeGraph";
 
 const previousStorageBackend = process.env.CONSTRUCT_STORAGE_BACKEND;
 const previousDatabaseUrl = process.env.DATABASE_URL;
@@ -225,6 +228,8 @@ test("ConstructAgentService creates question and plan jobs and persists the resu
                   id: "rust.ownership",
                   label: "Rust ownership",
                   category: "language",
+                  path: ["rust", "ownership"],
+                  labelPath: ["Rust", "Ownership"],
                   confidence: "new",
                   rationale: "The learner reported low confidence and the parser will rely on safe borrowing."
                 },
@@ -232,6 +237,8 @@ test("ConstructAgentService creates question and plan jobs and persists the resu
                   id: "domain.tokens",
                   label: "Token modeling",
                   category: "domain",
+                  path: ["domain", "tokens"],
+                  labelPath: ["Compiler design", "Token modeling"],
                   confidence: "shaky",
                   rationale: "The learner can name tokens but needs stronger design support."
                 }
@@ -577,11 +584,11 @@ test("ConstructAgentService creates question and plan jobs and persists the resu
       "utf8"
     );
     const knowledgeBase = JSON.parse(knowledgeBaseRaw) as {
-      concepts: Array<{ id: string }>;
+      concepts: StoredKnowledgeConcept[];
       goals: Array<{ goal: string }>;
     };
 
-    assert.ok(knowledgeBase.concepts.some((concept) => concept.id === "rust.ownership"));
+    assert.ok(findKnowledgeConcept(knowledgeBase.concepts, "rust.ownership"));
     assert.equal(knowledgeBase.goals[0]?.goal, "build a C compiler in Rust");
 
     const resumedService = new ConstructAgentService(root, {
@@ -772,6 +779,8 @@ test("ConstructAgentService skips broad research for small local goals", async (
                   id: "python.classes",
                   label: "Python classes",
                   category: "language",
+                  path: ["python", "classes"],
+                  labelPath: ["Python", "Classes"],
                   confidence: "comfortable",
                   rationale: "The learner is already comfortable with simple Python class structure."
                 }
@@ -939,6 +948,19 @@ test("ConstructAgentService skips broad research for small local goals", async (
         stage.includes("research-architecture:Research skipped for small local scope")
       )
     );
+
+    const knowledgeBaseRaw = await readFile(
+      path.join(root, ".construct", "state", "user-knowledge.json"),
+      "utf8"
+    );
+    const knowledgeBase = JSON.parse(knowledgeBaseRaw) as {
+      concepts: StoredKnowledgeConcept[];
+    };
+    const classesConcept = findKnowledgeConcept(knowledgeBase.concepts, "python.classes");
+
+    assert.ok(classesConcept);
+    assert.equal(classesConcept?.source, "self-report");
+    assert.match(classesConcept?.rationale ?? "", /built one tiny CLI before/i);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1052,6 +1074,8 @@ test("ConstructAgentService generates lesson-first blueprints without a repair l
                   id: "python.classes",
                   label: "Python classes",
                   category: "language",
+                  path: ["python", "classes"],
+                  labelPath: ["Python", "Classes"],
                   confidence: "shaky",
                   rationale: "The learner wants guidance, so the first step should teach the class shape before coding."
                 }

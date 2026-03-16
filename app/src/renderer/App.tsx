@@ -1,7 +1,7 @@
 import Editor from "@monaco-editor/react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { editor as MonacoEditor } from "monaco-editor";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -14,9 +14,7 @@ import { findAnchorLocation } from "./lib/anchors";
 import {
   buildGuidancePrompts,
   buildStepHints,
-  evaluateCheckResponse,
-  hasAnsweredCheck,
-  type CheckReview
+  hasAnsweredCheck
 } from "./lib/guide";
 import {
   completePlanningSession,
@@ -30,6 +28,7 @@ import {
   fetchWorkspaceFiles,
   requestBlueprintDeepDive,
   requestRuntimeGuide,
+  reviewStepCheck,
   saveWorkspaceFile,
   selectProject,
   startPlanningSession,
@@ -44,6 +43,7 @@ import type {
   AnchorLocation,
   BlueprintDeepDiveResponse,
   BlueprintStep,
+  CheckReview,
   ComprehensionCheck,
   GeneratedProjectPlan,
   LearningStyle,
@@ -58,6 +58,7 @@ import type {
   RunnerHealth,
   RuntimeInfo,
   RuntimeGuideResponse,
+  StoredKnowledgeConcept,
   TaskProgress,
   TaskResult,
   TaskSession,
@@ -136,6 +137,7 @@ export default function App() {
   const [checkResponses, setCheckResponses] = useState<Record<string, string>>({});
   const [checkReviews, setCheckReviews] = useState<Record<string, CheckReview>>({});
   const [checkAttemptCounts, setCheckAttemptCounts] = useState<Record<string, number>>({});
+  const [checkReviewBusyId, setCheckReviewBusyId] = useState<string | null>(null);
   const [taskRunState, setTaskRunState] = useState<TaskRunState>("idle");
   const [taskResult, setTaskResult] = useState<TaskResult | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
@@ -145,6 +147,7 @@ export default function App() {
   const [taskTelemetry, setTaskTelemetry] = useState<TaskTelemetry>(createEmptyTelemetry());
   const [taskError, setTaskError] = useState("");
   const [guideVisible, setGuideVisible] = useState(false);
+  const [guideMinimized, setGuideMinimized] = useState(false);
   const [runtimeGuide, setRuntimeGuide] = useState<RuntimeGuideResponse | null>(null);
   const [runtimeGuideEvents, setRuntimeGuideEvents] = useState<AgentEvent[]>([]);
   const [runtimeGuideBusy, setRuntimeGuideBusy] = useState(false);
@@ -203,7 +206,7 @@ export default function App() {
     }
 
     return activeStep.checks.filter((check) =>
-      checkReviews[check.id]?.status === "complete"
+      ["complete", "skipped"].includes(checkReviews[check.id]?.status ?? "")
     ).length;
   }, [activeStep, checkReviews]);
   const canApplyStep = useMemo(() => {
@@ -213,7 +216,9 @@ export default function App() {
 
     return (
       activeStep.checks.length === 0 ||
-      activeStep.checks.every((check) => checkReviews[check.id]?.status === "complete")
+      activeStep.checks.every((check) =>
+        ["complete", "skipped"].includes(checkReviews[check.id]?.status ?? "")
+      )
     );
   }, [activeStep, checkReviews]);
   const canCompletePlanning = useMemo(() => {
@@ -606,6 +611,7 @@ export default function App() {
     setSurfaceMode("brief");
     setDeepDiveError("");
     setGuideVisible(false);
+    setGuideMinimized(false);
     setRuntimeGuide(null);
     setRuntimeGuideEvents([]);
     setRuntimeGuideError("");
@@ -637,6 +643,7 @@ export default function App() {
       activeRequestIdRef
     });
     setSurfaceMode("focus");
+    setGuideMinimized(false);
     setGuideVisible(false);
     setRuntimeGuide(null);
     setRuntimeGuideEvents([]);
@@ -719,6 +726,14 @@ export default function App() {
     void loadRuntimeGuide(activeTaskResult);
   };
 
+  const handleMinimizeGuide = () => {
+    setGuideMinimized(true);
+  };
+
+  const handleExpandGuide = () => {
+    setGuideMinimized(false);
+  };
+
   const handleRequestDeepDive = async () => {
     if (!activeStep || !blueprintPath || !canonicalBlueprintPath) {
       return;
@@ -782,28 +797,67 @@ export default function App() {
     });
   };
 
-  const handleCheckReview = (check: ComprehensionCheck) => {
+  const handleCheckReview = async (check: ComprehensionCheck) => {
+    if (!activeStep) {
+      return;
+    }
+
     const response = checkResponses[check.id] ?? "";
     if (!hasAnsweredCheck(check, response)) {
       return;
     }
 
-    const review = evaluateCheckResponse(check, response);
+    setCheckReviewBusyId(check.id);
 
+    try {
+      const attemptCount = checkAttemptCounts[check.id] ?? 0;
+      const { review } = await reviewStepCheck({
+        stepId: activeStep.id,
+        stepTitle: activeStep.title,
+        stepSummary: activeStep.summary,
+        concepts: activeStep.concepts,
+        check,
+        response,
+        attemptCount
+      });
+
+      setCheckReviews((current) => ({
+        ...current,
+        [check.id]: review
+      }));
+
+      if (review.status === "needs-revision") {
+        setCheckAttemptCounts((current) => ({
+          ...current,
+          [check.id]: (current[check.id] ?? 0) + 1
+        }));
+        setStatusMessage(`Review the lesson again before retrying ${check.id}.`);
+      } else {
+        setStatusMessage(`Check complete for ${activeStep.title}.`);
+      }
+
+      setLearnerProfile(await fetchLearnerProfile());
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : `Failed to review ${check.id}.`;
+      setStatusMessage(message);
+    } finally {
+      setCheckReviewBusyId(null);
+    }
+  };
+
+  const handleSkipCheck = (check: ComprehensionCheck) => {
     setCheckReviews((current) => ({
       ...current,
-      [check.id]: review
+      [check.id]: {
+        status: "skipped",
+        message:
+          "Skipped after multiple tries. Construct will keep this concept marked as weak and can revisit it later.",
+        coveredCriteria: [],
+        missingCriteria: check.type === "short-answer" ? check.rubric : []
+      }
     }));
-
-    if (review.status === "needs-revision") {
-      setCheckAttemptCounts((current) => ({
-        ...current,
-        [check.id]: (current[check.id] ?? 0) + 1
-      }));
-      setStatusMessage(`Review the lesson again before retrying ${check.id}.`);
-    } else {
-      setStatusMessage(`Check complete for ${activeStep?.title ?? "this step"}.`);
-    }
+    setStatusMessage(`Skipped ${check.id} for now. Construct will treat it as a weak concept.`);
   };
 
   const handleSubmitTask = async () => {
@@ -835,6 +889,7 @@ export default function App() {
       setTaskSession(submission.session);
       setTaskProgress(submission.progress);
       setLearnerModel(submission.learnerModel);
+      setLearnerProfile(await fetchLearnerProfile());
       setTaskResult(submission.attempt.result);
       setGuideVisible(submission.attempt.status !== "passed");
       resetTaskTelemetry();
@@ -1317,7 +1372,10 @@ export default function App() {
                             deepDiveError={deepDiveError}
                             runtimeGuideEvents={runtimeGuideEvents}
                             learnerModel={learnerModel}
+                            minimized={guideMinimized}
                             onToggleGuide={handleToggleGuide}
+                            onMinimize={handleMinimizeGuide}
+                            onExpand={handleExpandGuide}
                             onRequestDeepDive={() => {
                               void handleRequestDeepDive();
                             }}
@@ -1424,12 +1482,14 @@ export default function App() {
             checkResponses={checkResponses}
             checkReviews={checkReviews}
             checkAttemptCounts={checkAttemptCounts}
+            checkReviewBusyId={checkReviewBusyId}
             onSelectStep={handleStepSelect}
             onApply={() => {
               void handleApplyStep();
             }}
             onCheckResponseChange={handleCheckResponseChange}
             onCheckReview={handleCheckReview}
+            onSkipCheck={handleSkipCheck}
             onRequestDeepDive={() => {
               void handleRequestDeepDive();
             }}
@@ -1457,7 +1517,10 @@ function FloatingGuideCard({
   deepDiveError,
   runtimeGuideEvents,
   learnerModel,
+  minimized,
   onToggleGuide,
+  onMinimize,
+  onExpand,
   onRequestDeepDive,
   onSubmitTask,
   onOpenBrief,
@@ -1486,7 +1549,10 @@ function FloatingGuideCard({
   deepDiveError: string;
   runtimeGuideEvents: AgentEvent[];
   learnerModel: LearnerModel | null;
+  minimized: boolean;
   onToggleGuide: () => void;
+  onMinimize: () => void;
+  onExpand: () => void;
   onRequestDeepDive: () => void;
   onSubmitTask: () => void;
   onOpenBrief: () => void;
@@ -1503,6 +1569,31 @@ function FloatingGuideCard({
   taskError: string;
   taskTelemetry: TaskTelemetry;
 }) {
+  if (minimized) {
+    return (
+      <motion.aside
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 16 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="construct-floating-card is-minimized"
+      >
+        <button
+          type="button"
+          onClick={onExpand}
+          className="construct-floating-card-minibar"
+          aria-label={`Expand guide for ${activeStep.title}`}
+        >
+          <span className="construct-floating-card-minibar-kicker">Guide</span>
+          <strong>{activeStep.title}</strong>
+          <span className="construct-floating-card-minibar-meta">
+            Step {activeStepIndex + 1}
+          </span>
+        </button>
+      </motion.aside>
+    );
+  }
+
   return (
     <motion.aside
       initial={{ opacity: 0, y: 24 }}
@@ -1513,10 +1604,20 @@ function FloatingGuideCard({
     >
       <div className="construct-floating-card-header">
         <div className="construct-floating-card-meta">
-          <span className="construct-floating-card-kicker">Guide</span>
-          <span className="construct-floating-card-step">
-            Step {activeStepIndex + 1} / {blueprint?.steps.length ?? 0}
-          </span>
+          <div className="construct-floating-card-meta-copy">
+            <span className="construct-floating-card-kicker">Guide</span>
+            <span className="construct-floating-card-step">
+              Step {activeStepIndex + 1} / {blueprint?.steps.length ?? 0}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onMinimize}
+            className="construct-guide-minimize-button"
+            aria-label="Minimize tutor"
+          >
+            Minimize
+          </button>
         </div>
         <h2 className="construct-floating-card-title">{activeStep.title}</h2>
         <p className="construct-floating-card-summary">{activeStep.summary}</p>
@@ -1978,11 +2079,37 @@ function ProjectsHome({
       : null;
   const completedProjects = projects.filter((project) => project.status === "completed").length;
   const knowledgeBase = learnerProfile?.knowledgeBase ?? null;
-  const knowledgeConcepts = knowledgeBase
-    ? knowledgeBase.concepts
-        .slice()
-        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-    : [];
+  const knowledgeRoots = knowledgeBase?.concepts ?? [];
+  const knowledgeConcepts = flattenKnowledgeConceptsForUi(knowledgeRoots)
+    .slice()
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+
+      return right.updatedAt.localeCompare(left.updatedAt);
+    });
+  const knowledgeStats = learnerProfile?.knowledgeStats ?? {
+    rootConceptCount: knowledgeRoots.length,
+    totalConceptCount: knowledgeConcepts.length,
+    leafConceptCount: knowledgeConcepts.filter((concept) => concept.children.length === 0).length,
+    maxDepth: knowledgeConcepts.reduce(
+      (depth, concept) => Math.max(depth, concept.id.split(".").length),
+      0
+    ),
+    averageScore:
+      knowledgeConcepts.length > 0
+        ? Math.round(
+            knowledgeConcepts.reduce((sum, concept) => sum + concept.score, 0) /
+              knowledgeConcepts.length
+          )
+        : 0,
+    strongConceptCount: knowledgeConcepts.filter((concept) => concept.score >= 75).length,
+    developingConceptCount: knowledgeConcepts.filter(
+      (concept) => concept.score >= 45 && concept.score < 75
+    ).length,
+    weakConceptCount: knowledgeConcepts.filter((concept) => concept.score < 45).length
+  };
   const recentGoals = knowledgeBase
     ? knowledgeBase.goals
         .slice()
@@ -1990,16 +2117,6 @@ function ProjectsHome({
         .slice(0, 5)
     : [];
   const historyEntries = learnerProfile?.learnerModel?.history ?? [];
-  const knowledgeByCategory = {
-    language: knowledgeConcepts.filter((concept) => concept.category === "language"),
-    domain: knowledgeConcepts.filter((concept) => concept.category === "domain"),
-    workflow: knowledgeConcepts.filter((concept) => concept.category === "workflow")
-  };
-  const comfortableConcepts = knowledgeConcepts.filter(
-    (concept) => concept.confidence === "comfortable"
-  ).length;
-  const shakyConcepts = knowledgeConcepts.filter((concept) => concept.confidence === "shaky").length;
-  const newConcepts = knowledgeConcepts.filter((concept) => concept.confidence === "new").length;
   const totalHintsUsed = Object.values(learnerProfile?.learnerModel?.hintsUsed ?? {}).reduce(
     (sum, value) => sum + value,
     0
@@ -2137,72 +2254,59 @@ function ProjectsHome({
           <div className="construct-home-surface-header">
             <div>
               <span className="construct-home-section-kicker">Learner profile</span>
-              <h2>Knowledge base</h2>
+              <h2>Knowledge graph</h2>
             </div>
             <span className="construct-toolbar-pill">{knowledgeConcepts.length}</span>
           </div>
 
           <p className="construct-home-surface-copy">
-            The Architect stores exact concepts here and reuses them when tailoring new
-            project questions, teaching depth, and build order.
+            This is the real learner knowledge graph Construct stores and uses while
+            planning. Topics can nest as deeply as needed, parent scores roll up from
+            child concepts, and runtime signals update the exact subtopic the learner is
+            struggling with or mastering.
           </p>
 
           <div className="construct-home-profile-stats">
             <div className="construct-home-profile-stat">
-              <span>Comfortable</span>
-              <strong>{comfortableConcepts}</strong>
+              <span>Concepts</span>
+              <strong>{knowledgeStats.totalConceptCount}</strong>
             </div>
             <div className="construct-home-profile-stat">
-              <span>Shaky</span>
-              <strong>{shakyConcepts}</strong>
+              <span>Roots</span>
+              <strong>{knowledgeStats.rootConceptCount}</strong>
             </div>
             <div className="construct-home-profile-stat">
-              <span>New</span>
-              <strong>{newConcepts}</strong>
+              <span>Leaves</span>
+              <strong>{knowledgeStats.leafConceptCount}</strong>
             </div>
             <div className="construct-home-profile-stat">
-              <span>Goals tracked</span>
-              <strong>{recentGoals.length}</strong>
+              <span>Depth</span>
+              <strong>{knowledgeStats.maxDepth}</strong>
             </div>
           </div>
 
-          {knowledgeConcepts.length > 0 ? (
-            <div className="construct-home-knowledge-groups">
-              {(
-                [
-                  ["language", "Language"],
-                  ["domain", "Domain"],
-                  ["workflow", "Workflow"]
-                ] as const
-              ).map(([category, label]) => (
-                <section key={category} className="construct-home-knowledge-group">
-                  <div className="construct-home-knowledge-group-header">
-                    <h3>{label}</h3>
-                    <span>{knowledgeByCategory[category].length}</span>
-                  </div>
+          <div className="construct-home-knowledge-summary">
+            <span>
+              Average score <strong>{knowledgeStats.averageScore}</strong>
+            </span>
+            <span>
+              Strong <strong>{knowledgeStats.strongConceptCount}</strong>
+            </span>
+            <span>
+              Developing <strong>{knowledgeStats.developingConceptCount}</strong>
+            </span>
+            <span>
+              Needs support <strong>{knowledgeStats.weakConceptCount}</strong>
+            </span>
+            <span>
+              Goals tracked <strong>{recentGoals.length}</strong>
+            </span>
+          </div>
 
-                  {knowledgeByCategory[category].length > 0 ? (
-                    <div className="construct-home-knowledge-list">
-                      {knowledgeByCategory[category].map((concept) => (
-                        <div key={concept.id} className="construct-home-knowledge-item">
-                          <div className="construct-home-knowledge-item-head">
-                            <strong>{concept.label}</strong>
-                            <span
-                              className={`construct-home-confidence is-${concept.confidence}`}
-                            >
-                              {concept.confidence}
-                            </span>
-                          </div>
-                          <p>{concept.rationale}</p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="construct-home-empty">
-                      No {label.toLowerCase()} concepts recorded yet.
-                    </div>
-                  )}
-                </section>
+          {knowledgeRoots.length > 0 ? (
+            <div className="construct-home-knowledge-tree">
+              {knowledgeRoots.map((concept) => (
+                <KnowledgeTreeNodeView key={concept.id} concept={concept} depth={0} />
               ))}
             </div>
           ) : (
@@ -2303,6 +2407,72 @@ function ProjectsHome({
         </section>
       </div>
     </section>
+  );
+}
+
+function flattenKnowledgeConceptsForUi(
+  concepts: StoredKnowledgeConcept[]
+): StoredKnowledgeConcept[] {
+  return concepts.flatMap((concept) => [
+    concept,
+    ...flattenKnowledgeConceptsForUi(concept.children)
+  ]);
+}
+
+function KnowledgeTreeNodeView({
+  concept,
+  depth
+}: {
+  concept: StoredKnowledgeConcept;
+  depth: number;
+}) {
+  const scoreLabel =
+    concept.score >= 75 ? "strong" : concept.score >= 45 ? "developing" : "needs support";
+  const latestEvidence = concept.evidence[0] ?? null;
+
+  return (
+    <div className="construct-knowledge-node" style={{ "--depth": depth } as CSSProperties}>
+      <div className="construct-knowledge-node-row">
+        <div className="construct-knowledge-node-copy">
+          <div className="construct-knowledge-node-head">
+            <strong>{concept.label}</strong>
+            <span className="construct-knowledge-node-category">{concept.category}</span>
+          </div>
+          <div className="construct-knowledge-node-subhead">
+            <span>{concept.id}</span>
+            <span>
+              {concept.children.length > 0
+                ? `${concept.children.length} subtopic${concept.children.length === 1 ? "" : "s"}`
+                : concept.selfScore === null
+                  ? "No direct score yet"
+                  : `leaf score ${concept.selfScore}`}
+            </span>
+          </div>
+          <p>{concept.rationale}</p>
+          {latestEvidence ? (
+            <div className="construct-knowledge-node-evidence">
+              <span className="construct-knowledge-node-source">{latestEvidence.source}</span>
+              <span>{latestEvidence.summary}</span>
+            </div>
+          ) : null}
+        </div>
+        <div className="construct-knowledge-node-meta">
+          <span className={`construct-knowledge-score is-${scoreLabel.replace(" ", "-")}`}>
+            {concept.score}
+          </span>
+          <span>{concept.evidence.length} signal{concept.evidence.length === 1 ? "" : "s"}</span>
+          <span>{formatProjectTimestamp(concept.updatedAt)}</span>
+        </div>
+      </div>
+
+      {concept.children.length > 0 ? (
+        <div className="construct-knowledge-node-children">
+          {concept.children.map((child) => (
+            <KnowledgeTreeNodeView key={child.id} concept={child} depth={depth + 1} />
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -2855,10 +3025,12 @@ function BriefOverlay({
   checkResponses,
   checkReviews,
   checkAttemptCounts,
+  checkReviewBusyId,
   onSelectStep,
   onApply,
   onCheckResponseChange,
   onCheckReview,
+  onSkipCheck,
   onRequestDeepDive,
   onToggleTheme,
   theme,
@@ -2874,10 +3046,12 @@ function BriefOverlay({
   checkResponses: Record<string, string>;
   checkReviews: Record<string, CheckReview>;
   checkAttemptCounts: Record<string, number>;
+  checkReviewBusyId: string | null;
   onSelectStep: (step: BlueprintStep) => void;
   onApply: () => void;
   onCheckResponseChange: (check: ComprehensionCheck, response: string) => void;
-  onCheckReview: (check: ComprehensionCheck) => void;
+  onCheckReview: (check: ComprehensionCheck) => void | Promise<void>;
+  onSkipCheck: (check: ComprehensionCheck) => void;
   onRequestDeepDive: () => void;
   onToggleTheme: () => void;
   theme: ThemeMode;
@@ -3166,6 +3340,7 @@ function BriefOverlay({
                         check={activeCheck}
                         response={checkResponses[activeCheck.id] ?? ""}
                         review={activeCheckReview}
+                        busy={checkReviewBusyId === activeCheck.id}
                         onResponseChange={onCheckResponseChange}
                         onReview={onCheckReview}
                       />
@@ -3184,16 +3359,27 @@ function BriefOverlay({
                           </button>
 
                           {activeCheckAttempts >= 2 ? (
-                            <button
-                              type="button"
-                              onClick={onRequestDeepDive}
-                              disabled={deepDiveBusy}
-                              className="construct-secondary-button"
-                            >
-                              {deepDiveBusy
-                                ? "Building a deeper lesson..."
-                                : "Need a deeper explanation?"}
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={onRequestDeepDive}
+                                disabled={deepDiveBusy}
+                                className="construct-secondary-button"
+                              >
+                                {deepDiveBusy
+                                  ? "Building a deeper lesson..."
+                                  : "Need a deeper explanation?"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onSkipCheck(activeCheck);
+                                }}
+                                className="construct-secondary-button"
+                              >
+                                Skip for now
+                              </button>
+                            </>
                           ) : null}
                         </div>
                       ) : null}
@@ -3223,7 +3409,10 @@ function BriefOverlay({
                   <button
                     type="button"
                     onClick={advanceChecks}
-                    disabled={Boolean(activeCheck) && activeCheckReview?.status !== "complete"}
+                    disabled={
+                      Boolean(activeCheck) &&
+                      !["complete", "skipped"].includes(activeCheckReview?.status ?? "")
+                    }
                     className="construct-primary-button"
                   >
                     {activeCheckIndex >= activeStep.checks.length - 1
@@ -3644,14 +3833,16 @@ function CheckCard({
   check,
   response,
   review,
+  busy,
   onResponseChange,
   onReview
 }: {
   check: ComprehensionCheck;
   response: string;
   review?: CheckReview;
+  busy: boolean;
   onResponseChange: (check: ComprehensionCheck, response: string) => void;
-  onReview: (check: ComprehensionCheck) => void;
+  onReview: (check: ComprehensionCheck) => void | Promise<void>;
 }) {
   return (
     <section className="construct-check-card">
@@ -3686,12 +3877,12 @@ function CheckCard({
           <button
             type="button"
             onClick={() => {
-              onReview(check);
+              void onReview(check);
             }}
-            disabled={!hasAnsweredCheck(check, response)}
+            disabled={!hasAnsweredCheck(check, response) || busy}
             className="construct-secondary-button"
           >
-            Check answer
+            {busy ? "Reviewing..." : "Check answer"}
           </button>
         </div>
       ) : (
@@ -3707,12 +3898,12 @@ function CheckCard({
           <button
             type="button"
             onClick={() => {
-              onReview(check);
+              void onReview(check);
             }}
-            disabled={!hasAnsweredCheck(check, response)}
+            disabled={!hasAnsweredCheck(check, response) || busy}
             className="construct-secondary-button"
           >
-            Review answer
+            {busy ? "Reviewing..." : "Review answer"}
           </button>
         </div>
       )}

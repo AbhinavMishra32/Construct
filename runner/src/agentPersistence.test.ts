@@ -112,6 +112,8 @@ test("local agent persistence stores planning state, knowledge, generated bluepr
               id: "rust-enums",
               label: "Rust enums",
               category: "language",
+              path: ["rust-enums"],
+              labelPath: ["Rust enums"],
               confidence: "new",
               rationale: "Needed for token representation."
             }

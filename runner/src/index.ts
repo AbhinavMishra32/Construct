@@ -7,6 +7,8 @@ import {
   AgentJobSnapshotSchema,
   BlueprintDeepDiveRequestSchema,
   BlueprintTaskRequestSchema,
+  CheckReviewRequestSchema,
+  CheckReviewResponseSchema,
   LearnerProfileResponseSchema,
   ProjectCurrentStepRequestSchema,
   ProjectSelectionRequestSchema,
@@ -377,11 +379,24 @@ const server = http.createServer(async (request, response) => {
         canonicalBlueprintPath: workspaceContext.canonicalBlueprintPath,
         stepId: submitRequest.stepId,
         markStepCompleted: taskSubmission.attempt.status === "passed",
-        lastAttemptStatus: taskSubmission.attempt.status
+        lastAttemptStatus: taskSubmission.attempt.status,
+        telemetry: taskSubmission.attempt.telemetry
       });
 
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify(taskSubmission));
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/checks/review") {
+      const body = await readRequestBody(request);
+      const reviewRequest = CheckReviewRequestSchema.parse(JSON.parse(body));
+      const review = CheckReviewResponseSchema.parse(
+        await getConstructAgent().reviewCheck(reviewRequest)
+      );
+
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(review));
       return;
     }
 

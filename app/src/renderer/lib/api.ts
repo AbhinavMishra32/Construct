@@ -5,6 +5,8 @@ import type {
   AgentJobCreatedResponse,
   AgentJobSnapshot,
   BlueprintEnvelope,
+  CheckReviewRequest,
+  CheckReviewResponse,
   CurrentPlanningSessionResponse,
   LearnerProfileResponse,
   LearnerModel,
@@ -223,6 +225,12 @@ export async function fetchLearnerProfile(
   signal?: AbortSignal
 ): Promise<LearnerProfileResponse> {
   return getJson<LearnerProfileResponse>("/learner/profile", { signal });
+}
+
+export async function reviewStepCheck(
+  input: CheckReviewRequest
+): Promise<CheckReviewResponse> {
+  return postJson<CheckReviewResponse>("/checks/review", input, `reviewing ${input.check.id}`);
 }
 
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {

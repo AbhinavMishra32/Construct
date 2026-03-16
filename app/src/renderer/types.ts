@@ -118,10 +118,18 @@ export type StoredKnowledgeConcept = {
   id: string;
   label: string;
   category: "language" | "domain" | "workflow";
-  confidence: ConceptConfidence;
+  score: number;
+  selfScore: number | null;
   rationale: string;
-  source: "self-report" | "agent-inferred" | "task-performance";
+  source: "self-report" | "agent-inferred" | "task-performance" | "quiz-review" | "runtime-guide";
   updatedAt: string;
+  evidence: Array<{
+    source: "self-report" | "agent-inferred" | "task-performance" | "quiz-review" | "runtime-guide";
+    score: number;
+    summary: string;
+    recordedAt: string;
+  }>;
+  children: StoredKnowledgeConcept[];
 };
 
 export type StoredKnowledgeGoal = {
@@ -137,9 +145,21 @@ export type UserKnowledgeBase = {
   goals: StoredKnowledgeGoal[];
 };
 
+export type KnowledgeGraphStats = {
+  rootConceptCount: number;
+  totalConceptCount: number;
+  leafConceptCount: number;
+  maxDepth: number;
+  averageScore: number;
+  strongConceptCount: number;
+  developingConceptCount: number;
+  weakConceptCount: number;
+};
+
 export type LearnerProfileResponse = {
   userId: string;
   knowledgeBase: UserKnowledgeBase;
+  knowledgeStats: KnowledgeGraphStats;
   learnerModel: LearnerModel | null;
 };
 
@@ -164,6 +184,27 @@ export type ComprehensionCheck =
       rubric: string[];
       placeholder?: string;
     };
+
+export type CheckReview = {
+  status: "complete" | "needs-revision" | "skipped";
+  message: string;
+  coveredCriteria: string[];
+  missingCriteria: string[];
+};
+
+export type CheckReviewRequest = {
+  stepId: string;
+  stepTitle: string;
+  stepSummary: string;
+  concepts: string[];
+  check: ComprehensionCheck;
+  response: string;
+  attemptCount: number;
+};
+
+export type CheckReviewResponse = {
+  review: CheckReview;
+};
 
 export type BlueprintStep = {
   id: string;

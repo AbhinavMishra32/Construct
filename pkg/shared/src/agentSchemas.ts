@@ -9,6 +9,15 @@ export const LearningStyleSchema = z.enum([
 ]);
 
 export const ConceptConfidenceSchema = z.enum(["comfortable", "shaky", "new"]);
+export const KnowledgeCategorySchema = z.enum(["language", "domain", "workflow"]);
+export const KnowledgeSourceSchema = z.enum([
+  "self-report",
+  "agent-inferred",
+  "task-performance",
+  "quiz-review",
+  "runtime-guide"
+]);
+export const KnowledgeMasteryScoreSchema = z.number().int().min(0).max(100);
 
 export const PlanningQuestionOptionSchema = z.object({
   id: z.string().min(1),
@@ -20,7 +29,7 @@ export const PlanningQuestionOptionSchema = z.object({
 export const PlanningQuestionSchema = z.object({
   id: z.string().min(1),
   conceptId: z.string().min(1),
-  category: z.enum(["language", "domain", "workflow"]),
+  category: KnowledgeCategorySchema,
   prompt: z.string().min(1),
   options: z.array(PlanningQuestionOptionSchema).length(3)
 });
@@ -57,8 +66,11 @@ export const PlanningAnswerSchema = z.discriminatedUnion("answerType", [
 export const ConceptNodeSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
-  category: z.enum(["language", "domain", "workflow"]),
-  confidence: ConceptConfidenceSchema,
+  category: KnowledgeCategorySchema,
+  path: z.array(z.string().min(1)).min(1),
+  labelPath: z.array(z.string().min(1)).min(1),
+  confidence: ConceptConfidenceSchema.optional(),
+  masteryScore: KnowledgeMasteryScoreSchema.optional(),
   rationale: z.string().min(1)
 });
 
@@ -123,15 +135,40 @@ export const CurrentPlanningSessionResponseSchema = z.object({
   plan: GeneratedProjectPlanSchema.nullable()
 });
 
-export const StoredKnowledgeConceptSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
-  category: z.enum(["language", "domain", "workflow"]),
-  confidence: ConceptConfidenceSchema,
-  rationale: z.string().min(1),
-  source: z.enum(["self-report", "agent-inferred", "task-performance"]),
-  updatedAt: z.string().datetime()
+export const KnowledgeEvidenceSchema = z.object({
+  source: KnowledgeSourceSchema,
+  score: KnowledgeMasteryScoreSchema,
+  summary: z.string().min(1),
+  recordedAt: z.string().datetime()
 });
+
+type StoredKnowledgeConceptShape = {
+  id: string;
+  label: string;
+  category: z.infer<typeof KnowledgeCategorySchema>;
+  score: number;
+  selfScore: number | null;
+  rationale: string;
+  source: z.infer<typeof KnowledgeSourceSchema>;
+  updatedAt: string;
+  evidence: Array<z.infer<typeof KnowledgeEvidenceSchema>>;
+  children: StoredKnowledgeConceptShape[];
+};
+
+export const StoredKnowledgeConceptSchema: z.ZodType<StoredKnowledgeConceptShape> = z.lazy(() =>
+  z.object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    category: KnowledgeCategorySchema,
+    score: KnowledgeMasteryScoreSchema,
+    selfScore: KnowledgeMasteryScoreSchema.nullable(),
+    rationale: z.string().min(1),
+    source: KnowledgeSourceSchema,
+    updatedAt: z.string().datetime(),
+    evidence: z.array(KnowledgeEvidenceSchema),
+    children: z.array(StoredKnowledgeConceptSchema)
+  })
+);
 
 export const StoredKnowledgeGoalSchema = z.object({
   goal: z.string().min(3),
@@ -146,9 +183,21 @@ export const UserKnowledgeBaseSchema = z.object({
   goals: z.array(StoredKnowledgeGoalSchema).default([])
 });
 
+export const KnowledgeGraphStatsSchema = z.object({
+  rootConceptCount: z.number().int().min(0),
+  totalConceptCount: z.number().int().min(0),
+  leafConceptCount: z.number().int().min(0),
+  maxDepth: z.number().int().min(0),
+  averageScore: KnowledgeMasteryScoreSchema,
+  strongConceptCount: z.number().int().min(0),
+  developingConceptCount: z.number().int().min(0),
+  weakConceptCount: z.number().int().min(0)
+});
+
 export const LearnerProfileResponseSchema = z.object({
   userId: z.string().min(1),
   knowledgeBase: UserKnowledgeBaseSchema,
+  knowledgeStats: KnowledgeGraphStatsSchema,
   learnerModel: LearnerModelSchema.nullable().default(null)
 });
 
@@ -244,6 +293,8 @@ export const BlueprintDeepDiveResponseSchema = z.object({
 
 export type LearningStyle = z.infer<typeof LearningStyleSchema>;
 export type ConceptConfidence = z.infer<typeof ConceptConfidenceSchema>;
+export type KnowledgeCategory = z.infer<typeof KnowledgeCategorySchema>;
+export type KnowledgeSource = z.infer<typeof KnowledgeSourceSchema>;
 export type PlanningQuestionOption = z.infer<typeof PlanningQuestionOptionSchema>;
 export type PlanningQuestion = z.infer<typeof PlanningQuestionSchema>;
 export type PlanningSessionStartRequest = z.infer<typeof PlanningSessionStartRequestSchema>;
@@ -262,6 +313,7 @@ export type LearnerProfileResponse = z.infer<typeof LearnerProfileResponseSchema
 export type StoredKnowledgeConcept = z.infer<typeof StoredKnowledgeConceptSchema>;
 export type StoredKnowledgeGoal = z.infer<typeof StoredKnowledgeGoalSchema>;
 export type UserKnowledgeBase = z.infer<typeof UserKnowledgeBaseSchema>;
+export type KnowledgeGraphStats = z.infer<typeof KnowledgeGraphStatsSchema>;
 export type AgentJobKind = z.infer<typeof AgentJobKindSchema>;
 export type AgentJobStatus = z.infer<typeof AgentJobStatusSchema>;
 export type AgentEventLevel = z.infer<typeof AgentEventLevelSchema>;
