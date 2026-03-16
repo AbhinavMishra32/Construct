@@ -114,6 +114,35 @@ export type LearnerModel = {
   reflections: Record<string, string>;
 };
 
+export type StoredKnowledgeConcept = {
+  id: string;
+  label: string;
+  category: "language" | "domain" | "workflow";
+  confidence: ConceptConfidence;
+  rationale: string;
+  source: "self-report" | "agent-inferred" | "task-performance";
+  updatedAt: string;
+};
+
+export type StoredKnowledgeGoal = {
+  goal: string;
+  language: string;
+  domain: string;
+  lastPlannedAt: string;
+};
+
+export type UserKnowledgeBase = {
+  updatedAt: string;
+  concepts: StoredKnowledgeConcept[];
+  goals: StoredKnowledgeGoal[];
+};
+
+export type LearnerProfileResponse = {
+  userId: string;
+  knowledgeBase: UserKnowledgeBase;
+  learnerModel: LearnerModel | null;
+};
+
 export type CheckOption = {
   id: string;
   label: string;

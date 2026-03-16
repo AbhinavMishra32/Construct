@@ -146,6 +146,12 @@ export const UserKnowledgeBaseSchema = z.object({
   goals: z.array(StoredKnowledgeGoalSchema).default([])
 });
 
+export const LearnerProfileResponseSchema = z.object({
+  userId: z.string().min(1),
+  knowledgeBase: UserKnowledgeBaseSchema,
+  learnerModel: LearnerModelSchema.nullable().default(null)
+});
+
 export const AgentJobKindSchema = z.enum([
   "planning-questions",
   "planning-plan",
@@ -252,6 +258,7 @@ export type PlanningSessionStartResponse = z.infer<typeof PlanningSessionStartRe
 export type PlanningSessionCompleteRequest = z.infer<typeof PlanningSessionCompleteRequestSchema>;
 export type PlanningSessionCompleteResponse = z.infer<typeof PlanningSessionCompleteResponseSchema>;
 export type CurrentPlanningSessionResponse = z.infer<typeof CurrentPlanningSessionResponseSchema>;
+export type LearnerProfileResponse = z.infer<typeof LearnerProfileResponseSchema>;
 export type StoredKnowledgeConcept = z.infer<typeof StoredKnowledgeConceptSchema>;
 export type StoredKnowledgeGoal = z.infer<typeof StoredKnowledgeGoalSchema>;
 export type UserKnowledgeBase = z.infer<typeof UserKnowledgeBaseSchema>;

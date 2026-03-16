@@ -1,7 +1,7 @@
 import Editor from "@monaco-editor/react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { editor as MonacoEditor } from "monaco-editor";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -21,6 +21,7 @@ import {
 import {
   completePlanningSession,
   fetchBlueprint,
+  fetchLearnerProfile,
   fetchLearnerModel,
   fetchProjectsDashboard,
   fetchRunnerHealth,
@@ -46,6 +47,7 @@ import type {
   ComprehensionCheck,
   GeneratedProjectPlan,
   LearningStyle,
+  LearnerProfileResponse,
   LearnerModel,
   PlanningAnswer,
   PlanningSession,
@@ -138,6 +140,7 @@ export default function App() {
   const [taskResult, setTaskResult] = useState<TaskResult | null>(null);
   const [taskProgress, setTaskProgress] = useState<TaskProgress | null>(null);
   const [taskSession, setTaskSession] = useState<TaskSession | null>(null);
+  const [learnerProfile, setLearnerProfile] = useState<LearnerProfileResponse | null>(null);
   const [learnerModel, setLearnerModel] = useState<LearnerModel | null>(null);
   const [taskTelemetry, setTaskTelemetry] = useState<TaskTelemetry>(createEmptyTelemetry());
   const [taskError, setTaskError] = useState("");
@@ -257,13 +260,15 @@ export default function App() {
 
     const loadDashboard = async () => {
       try {
-        const [health, projects] = await Promise.all([
+        const [health, projects, profile] = await Promise.all([
           fetchRunnerHealth(controller.signal),
-          fetchProjectsDashboard(controller.signal)
+          fetchProjectsDashboard(controller.signal),
+          fetchLearnerProfile(controller.signal)
         ]);
 
         setRunnerHealth(health);
         setProjectsDashboard(projects);
+        setLearnerProfile(profile);
         setPlanningSession(null);
         setPlanningPlan(null);
         setPlanningAnswers({});
@@ -302,6 +307,7 @@ export default function App() {
           error instanceof Error ? error.message : "Runner is not reachable.";
         setLoadError(message);
         setProjectsError(message);
+        setLearnerProfile(null);
         setStatusMessage("Construct is waiting for the local runner.");
       }
     };
@@ -442,7 +448,7 @@ export default function App() {
       return;
     }
 
-    void refreshProjectsDashboard().catch(() => {
+    void refreshDashboardState().catch(() => {
       // Keep the last successful dashboard state if a refresh misses.
     });
   }, [dashboardOpen]);
@@ -521,9 +527,13 @@ export default function App() {
     return blueprintEnvelope.blueprint;
   };
 
-  const refreshProjectsDashboard = async (signal?: AbortSignal) => {
-    const projects = await fetchProjectsDashboard(signal);
+  const refreshDashboardState = async (signal?: AbortSignal) => {
+    const [projects, profile] = await Promise.all([
+      fetchProjectsDashboard(signal),
+      fetchLearnerProfile(signal)
+    ]);
     setProjectsDashboard(projects);
+    setLearnerProfile(profile);
     setProjectsError("");
     return projects;
   };
@@ -534,9 +544,9 @@ export default function App() {
 
     try {
       const selection = await selectProject(project.id);
-      const dashboard = await refreshProjectsDashboard();
+      const dashboardState = await refreshDashboardState();
       const selectedProject =
-        dashboard.projects.find((entry) => entry.id === selection.activeProjectId) ?? project;
+        dashboardState.projects.find((entry) => entry.id === selection.activeProjectId) ?? project;
       await hydrateWorkspace(selectedProject.currentStepId);
       setDashboardOpen(false);
       setPlanningOverlayOpen(false);
@@ -913,9 +923,11 @@ export default function App() {
 
       setPlanningSession(completed.session);
       setPlanningPlan(completed.plan);
-      const dashboard = await refreshProjectsDashboard();
+      const dashboardState = await refreshDashboardState();
       const activeProjectSummary =
-        dashboard.projects.find((project) => project.id === dashboard.activeProjectId) ?? null;
+        dashboardState.projects.find(
+          (project) => project.id === dashboardState.activeProjectId
+        ) ?? null;
       const openedBlueprint = await hydrateWorkspace(activeProjectSummary?.currentStepId);
 
       if (!openedBlueprint) {
@@ -960,295 +972,401 @@ export default function App() {
     setPlanningOverlayOpen(true);
   };
 
+  const currentView: "projects" | "lesson" | "code" =
+    dashboardOpen
+      ? "projects"
+      : surfaceMode === "brief" && activeStep
+        ? "lesson"
+        : "code";
+  const showAppSidebar = currentView !== "code";
+  const editorBreadcrumb = buildEditorBreadcrumb(blueprint?.name ?? "Project", activeFilePath);
+
   return (
     <main className="construct-app">
-      {dashboardOpen ? (
-        <ProjectsHome
-          projectsDashboard={projectsDashboard}
-          runnerHealth={runnerHealth}
-          projectsError={projectsError}
-          dashboardBusy={dashboardBusy}
-          onOpenProject={(project) => {
-            void openProject(project);
-          }}
-          onStartProject={() => {
-            openFreshPlanningOverlay();
-          }}
-          onToggleTheme={toggleTheme}
-          theme={theme}
-        />
-      ) : (
-        <div className="construct-layout">
-          <aside className="construct-explorer">
-            <div className="construct-filter-shell">
-              <input
-                value={filterQuery}
-                onChange={(event) => {
-                  setFilterQuery(event.target.value);
+      <div className={`construct-shell ${showAppSidebar ? "" : "is-code-view"}`.trim()}>
+        {showAppSidebar ? (
+          <AppSidebar
+            projectsDashboard={projectsDashboard}
+            runnerHealth={runnerHealth}
+            dashboardBusy={dashboardBusy}
+            currentView={currentView}
+            activeStep={activeStep}
+            activeProjectName={blueprint?.name ?? null}
+            onOpenProject={(project) => {
+              void openProject(project);
+            }}
+            onOpenProjects={() => {
+              setDashboardOpen(true);
+              setPlanningOverlayOpen(false);
+              setStatusMessage("Opened projects dashboard.");
+            }}
+            onOpenLesson={() => {
+              if (!activeStep) {
+                return;
+              }
+
+              setDashboardOpen(false);
+              setSurfaceMode("brief");
+              setStatusMessage(`Opened lesson for ${activeStep.title}.`);
+            }}
+            onOpenCode={() => {
+              setDashboardOpen(false);
+              setSurfaceMode("focus");
+              setStatusMessage(
+                activeStep
+                  ? `Returned to the code workspace for ${activeStep.title}.`
+                  : "Returned to the code workspace."
+              );
+            }}
+            onStartProject={openFreshPlanningOverlay}
+          />
+        ) : null}
+
+        <section className="construct-shell-main">
+          <WorkbenchTopbar
+            currentView={currentView}
+            activeProjectName={blueprint?.name ?? null}
+            activeStepTitle={activeStep?.title ?? null}
+            activeFilePath={activeFilePath}
+            runnerHealth={runnerHealth}
+            saveStateLabel={saveStateLabel}
+            onOpenProjects={() => {
+              setDashboardOpen(true);
+              setPlanningOverlayOpen(false);
+              setStatusMessage("Opened projects dashboard.");
+            }}
+            onOpenLesson={() => {
+              if (!activeStep) {
+                return;
+              }
+
+              setDashboardOpen(false);
+              setSurfaceMode("brief");
+              setStatusMessage(`Opened lesson for ${activeStep.title}.`);
+            }}
+            onOpenCode={() => {
+              setDashboardOpen(false);
+              setSurfaceMode("focus");
+              setStatusMessage(
+                activeStep
+                  ? `Returned to the code workspace for ${activeStep.title}.`
+                  : "Returned to the code workspace."
+              );
+            }}
+            onStartProject={openFreshPlanningOverlay}
+            onToggleTheme={toggleTheme}
+            theme={theme}
+          />
+
+          <div className="construct-shell-content">
+            {dashboardOpen ? (
+              <ProjectsHome
+                projectsDashboard={projectsDashboard}
+                learnerProfile={learnerProfile}
+                runnerHealth={runnerHealth}
+                projectsError={projectsError}
+                dashboardBusy={dashboardBusy}
+                onOpenProject={(project) => {
+                  void openProject(project);
                 }}
-                placeholder="Filter files..."
-                className="construct-filter-input"
-                aria-label="Filter files"
+                onStartProject={() => {
+                  openFreshPlanningOverlay();
+                }}
               />
-            </div>
-
-            <div className="construct-explorer-scroll">
-              {filteredTree.length > 0 ? (
-                <nav className="construct-tree" aria-label="Workspace files">
-                  {filteredTree.map((node) => (
-                    <ExplorerTreeNode
-                      key={node.path}
-                      node={node}
-                      activeFilePath={activeFilePath}
-                      onSelectFile={handleFileClick}
-                      expandedDirectories={expandedDirectories}
-                      onToggleDirectory={(path) => {
-                        setExpandedDirectories((current) => ({
-                          ...current,
-                          [path]: !(current[path] ?? true)
-                        }));
-                      }}
-                      forceExpanded={explorerIsFiltered}
-                    />
-                  ))}
-                </nav>
-              ) : (
-                <div className="construct-explorer-empty">
-                  {filterQuery.trim().length > 0
-                    ? "No files match the current filter."
-                    : "No files loaded yet."}
-                </div>
-              )}
-            </div>
-          </aside>
-
-          <section className={`construct-stage ${surfaceMode === "focus" && activeStep ? "has-guide-rail" : ""}`}>
-            <div className="construct-workspace-shell">
-              <section className="construct-editor-shell">
-                <header className="construct-editor-chrome">
-                  <div className="construct-editor-chrome-left">
-                    <span className="construct-toolbar-pill">{saveStateLabel}</span>
-                    <span className="construct-toolbar-pill">
-                      {runnerHealth?.status ?? "offline"}
-                    </span>
-                    <span className="construct-toolbar-pill">{taskAttemptLabel}</span>
-                    <span className="construct-toolbar-pill">{snapshotLabel}</span>
-                  </div>
-
-                  <div className="construct-editor-chrome-center">
-                    <div className="construct-toolbar-center">
-                      <span className="construct-toolbar-title">
-                        {activeStep ? activeStep.title : blueprint?.name ?? "Construct"}
-                      </span>
+            ) : (
+              <div className="construct-workbench">
+                <div className="construct-layout">
+                  <aside className="construct-explorer">
+                    <div className="construct-explorer-header">
+                      <span className="construct-panel-kicker">Project</span>
+                      <strong>{blueprint?.name ?? "Workspace"}</strong>
                     </div>
-                  </div>
 
-                  <div className="construct-editor-chrome-right">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDashboardOpen(true);
-                        setPlanningOverlayOpen(false);
-                        setStatusMessage("Opened projects dashboard.");
-                      }}
-                      className="construct-secondary-button"
-                    >
-                      Projects
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openFreshPlanningOverlay}
-                      className="construct-secondary-button"
-                    >
-                      New
-                    </button>
-                    <button
-                      type="button"
-                      onClick={toggleTheme}
-                      className="construct-theme-toggle"
-                    >
-                      {theme === "light" ? "Dark" : "Light"}
-                    </button>
-                  </div>
-                </header>
+                    <div className="construct-filter-shell">
+                      <input
+                        value={filterQuery}
+                        onChange={(event) => {
+                          setFilterQuery(event.target.value);
+                        }}
+                        placeholder="Filter files..."
+                        className="construct-filter-input"
+                        aria-label="Filter files"
+                      />
+                    </div>
 
-                {activeFilePath ? (
-                  <Editor
-                    height="100%"
-                    theme={editorTheme}
-                    path={activeFilePath}
-                    language={languageForPath(activeFilePath)}
-                    value={editorValue}
-                    onMount={(editor) => {
-                      editorRef.current = editor;
-                      applyAnchorDecoration(editor, anchorLocation, decorationIdsRef.current, {
-                        setDecorationIds(nextIds) {
-                          decorationIdsRef.current = nextIds;
-                        }
-                      });
+                    <div className="construct-explorer-scroll">
+                      {filteredTree.length > 0 ? (
+                        <nav className="construct-tree" aria-label="Workspace files">
+                          {filteredTree.map((node) => (
+                            <ExplorerTreeNode
+                              key={node.path}
+                              node={node}
+                              activeFilePath={activeFilePath}
+                              onSelectFile={handleFileClick}
+                              expandedDirectories={expandedDirectories}
+                              onToggleDirectory={(path) => {
+                                setExpandedDirectories((current) => ({
+                                  ...current,
+                                  [path]: !(current[path] ?? true)
+                                }));
+                              }}
+                              forceExpanded={explorerIsFiltered}
+                            />
+                          ))}
+                        </nav>
+                      ) : (
+                        <div className="construct-explorer-empty">
+                          {filterQuery.trim().length > 0
+                            ? "No files match the current filter."
+                            : "No files loaded yet."}
+                        </div>
+                      )}
+                    </div>
+                  </aside>
 
-                      const domNode = editor.getDomNode();
-                      const pasteTarget = domNode?.querySelector(".inputarea") ?? domNode;
-                      const handlePaste = (event: Event) => {
-                        if (rewriteGateRef.current) {
-                          event.preventDefault();
-                          setStatusMessage(
-                            "Verification rewrite is active. Retype the anchored code from memory instead of pasting."
-                          );
-                          return;
-                        }
+                  <section className="construct-stage">
+                    <div className="construct-workspace-shell">
+                      <section className="construct-editor-shell">
+                        <header className="construct-editor-header">
+                          <div className="construct-editor-tabs">
+                            <span className="construct-editor-tab construct-editor-tab--context">
+                              Code
+                            </span>
+                            <span className="construct-editor-tab is-active">
+                              {labelForEditorPath(activeFilePath)}
+                            </span>
+                            {activeStep ? (
+                              <span className="construct-editor-tab">
+                                Step {activeStepIndex + 1}
+                              </span>
+                            ) : null}
+                          </div>
 
-                        const clipboardEvent = event as ClipboardEvent;
-                        const pastedText = clipboardEvent.clipboardData?.getData("text") ?? "";
+                          <div className="construct-editor-header-actions">
+                            <span className="construct-toolbar-pill">
+                              {runnerHealth?.status ?? "offline"}
+                            </span>
+                            <span className="construct-toolbar-pill">{taskAttemptLabel}</span>
+                            <span className="construct-toolbar-pill">{snapshotLabel}</span>
+                            {activeStep ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSurfaceMode("brief");
+                                  setStatusMessage(`Opened brief for ${activeStep.title}.`);
+                                }}
+                                className="construct-secondary-button"
+                              >
+                                Open brief
+                              </button>
+                            ) : null}
+                          </div>
+                        </header>
 
-                        if (pastedText.length > 0) {
-                          pendingPasteCharsRef.current += pastedText.length;
-                        }
-                      };
-                      const changeDisposable = editor.onDidChangeModelContent((event) => {
-                        if (event.isFlush || event.isUndoing || event.isRedoing) {
-                          return;
-                        }
+                        <div className="construct-editor-breadcrumb">
+                          {editorBreadcrumb.map((segment, index) => (
+                            <Fragment key={`${segment}:${index}`}>
+                              {index > 0 ? (
+                                <span className="construct-editor-breadcrumb-separator">/</span>
+                              ) : null}
+                              <span
+                                className={`construct-editor-breadcrumb-segment ${
+                                  index === editorBreadcrumb.length - 1 ? "is-active" : ""
+                                }`}
+                              >
+                                {segment}
+                              </span>
+                            </Fragment>
+                          ))}
+                        </div>
 
-                        let insertedCharacters = event.changes.reduce(
-                          (total, change) => total + change.text.length,
-                          0
-                        );
+                        <div className="construct-editor-main">
+                          {activeFilePath ? (
+                            <Editor
+                              height="100%"
+                              theme={editorTheme}
+                              path={activeFilePath}
+                              language={languageForPath(activeFilePath)}
+                              value={editorValue}
+                              onMount={(editor) => {
+                                editorRef.current = editor;
+                                applyAnchorDecoration(
+                                  editor,
+                                  anchorLocation,
+                                  decorationIdsRef.current,
+                                  {
+                                    setDecorationIds(nextIds) {
+                                      decorationIdsRef.current = nextIds;
+                                    }
+                                  }
+                                );
 
-                        if (insertedCharacters <= 0) {
-                          return;
-                        }
+                                const domNode = editor.getDomNode();
+                                const pasteTarget =
+                                  domNode?.querySelector(".inputarea") ?? domNode;
+                                const handlePaste = (event: Event) => {
+                                  if (rewriteGateRef.current) {
+                                    event.preventDefault();
+                                    setStatusMessage(
+                                      "Verification rewrite is active. Retype the anchored code from memory instead of pasting."
+                                    );
+                                    return;
+                                  }
 
-                        if (pendingPasteCharsRef.current > 0) {
-                          const pastedCharacters = Math.min(
-                            pendingPasteCharsRef.current,
-                            insertedCharacters
-                          );
-                          telemetryRef.current = {
-                            ...telemetryRef.current,
-                            pastedChars: telemetryRef.current.pastedChars + pastedCharacters
-                          };
-                          pendingPasteCharsRef.current -= pastedCharacters;
-                          insertedCharacters -= pastedCharacters;
-                        }
+                                  const clipboardEvent = event as ClipboardEvent;
+                                  const pastedText =
+                                    clipboardEvent.clipboardData?.getData("text") ?? "";
 
-                        if (insertedCharacters > 0) {
-                          telemetryRef.current = {
-                            ...telemetryRef.current,
-                            typedChars: telemetryRef.current.typedChars + insertedCharacters
-                          };
-                        }
+                                  if (pastedText.length > 0) {
+                                    pendingPasteCharsRef.current += pastedText.length;
+                                  }
+                                };
+                                const changeDisposable = editor.onDidChangeModelContent((event) => {
+                                  if (event.isFlush || event.isUndoing || event.isRedoing) {
+                                    return;
+                                  }
 
-                        syncTelemetry();
-                      });
+                                  let insertedCharacters = event.changes.reduce(
+                                    (total, change) => total + change.text.length,
+                                    0
+                                  );
 
-                      pasteTarget?.addEventListener("paste", handlePaste);
-                      editor.onDidDispose(() => {
-                        changeDisposable.dispose();
-                        pasteTarget?.removeEventListener("paste", handlePaste);
-                      });
-                    }}
-                    onChange={(value) => {
-                      setEditorValue(value ?? "");
-                    }}
-                    options={{
-                      fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
-                      fontSize: 14,
-                      smoothScrolling: true,
-                      minimap: { enabled: false },
-                      scrollBeyondLastLine: false,
-                      glyphMargin: true,
-                      lineNumbersMinChars: 4,
-                      tabSize: 2,
-                      padding: {
-                        top: 140,
-                        bottom: 112
-                      }
-                    }}
-                  />
-                ) : (
-                  <div className="construct-editor-empty">
-                    <span>MONACO EDITOR</span>
-                  </div>
-                )}
+                                  if (insertedCharacters <= 0) {
+                                    return;
+                                  }
 
-                <div className="construct-status-strip">
-                  <span className="construct-status-item">
-                    {activeFilePath || "No file focused"}
-                  </span>
-                  <span className="construct-status-item">
-                    {statusMessage}
-                  </span>
-                  <span className="construct-status-item">
-                    {activeStep ? `Step ${activeStepIndex + 1}` : "No step"}
-                  </span>
-                  {loadError ? (
-                    <span className="construct-status-item is-error">{loadError}</span>
-                  ) : null}
+                                  if (pendingPasteCharsRef.current > 0) {
+                                    const pastedCharacters = Math.min(
+                                      pendingPasteCharsRef.current,
+                                      insertedCharacters
+                                    );
+                                    telemetryRef.current = {
+                                      ...telemetryRef.current,
+                                      pastedChars:
+                                        telemetryRef.current.pastedChars + pastedCharacters
+                                    };
+                                    pendingPasteCharsRef.current -= pastedCharacters;
+                                    insertedCharacters -= pastedCharacters;
+                                  }
+
+                                  if (insertedCharacters > 0) {
+                                    telemetryRef.current = {
+                                      ...telemetryRef.current,
+                                      typedChars:
+                                        telemetryRef.current.typedChars + insertedCharacters
+                                    };
+                                  }
+
+                                  syncTelemetry();
+                                });
+
+                                pasteTarget?.addEventListener("paste", handlePaste);
+                                editor.onDidDispose(() => {
+                                  changeDisposable.dispose();
+                                  pasteTarget?.removeEventListener("paste", handlePaste);
+                                });
+                              }}
+                              onChange={(value) => {
+                                setEditorValue(value ?? "");
+                              }}
+                              options={{
+                                fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                                fontSize: 14,
+                                smoothScrolling: true,
+                                minimap: { enabled: false },
+                                scrollBeyondLastLine: false,
+                                glyphMargin: true,
+                                lineNumbersMinChars: 4,
+                                tabSize: 2,
+                                padding: {
+                                  top: 22,
+                                  bottom: 104
+                                }
+                              }}
+                            />
+                          ) : (
+                            <div className="construct-editor-empty">
+                              <span>MONACO EDITOR</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="construct-status-strip">
+                          <span className="construct-status-item">
+                            {activeFilePath || "No file focused"}
+                          </span>
+                          <span className="construct-status-item">{statusMessage}</span>
+                          <span className="construct-status-item">
+                            {activeStep ? `Step ${activeStepIndex + 1}` : "No step"}
+                          </span>
+                          {loadError ? (
+                            <span className="construct-status-item is-error">{loadError}</span>
+                          ) : null}
+                        </div>
+                        {surfaceMode === "focus" && activeStep ? (
+                          <FloatingGuideCard
+                            activeStep={activeStep}
+                            activeStepIndex={activeStepIndex}
+                            blueprint={blueprint}
+                            guidePrompts={guideQuestions}
+                            guideVisible={guideVisible}
+                            runtimeGuide={runtimeGuide}
+                            runtimeGuideBusy={runtimeGuideBusy}
+                            runtimeGuideError={runtimeGuideError}
+                            deepDiveBusy={deepDiveBusy}
+                            deepDiveError={deepDiveError}
+                            runtimeGuideEvents={runtimeGuideEvents}
+                            learnerModel={learnerModel}
+                            onToggleGuide={handleToggleGuide}
+                            onRequestDeepDive={() => {
+                              void handleRequestDeepDive();
+                            }}
+                            onSubmitTask={() => {
+                              void handleSubmitTask();
+                            }}
+                            onOpenBrief={() => {
+                              setSurfaceMode("brief");
+                              setStatusMessage(`Opened brief for ${activeStep.title}.`);
+                            }}
+                            onRefocus={() => {
+                              void handleApplyStep();
+                            }}
+                            onRevealHint={(level) => {
+                              setRevealedHintLevel((current) => {
+                                if (level <= current) {
+                                  return current;
+                                }
+
+                                telemetryRef.current = {
+                                  ...telemetryRef.current,
+                                  hintsUsed: telemetryRef.current.hintsUsed + (level - current)
+                                };
+                                syncTelemetry();
+
+                                return level;
+                              });
+                            }}
+                            revealedHintLevel={revealedHintLevel}
+                            stepHints={visibleHints}
+                            attemptStatus={activeAttemptStatus}
+                            rewriteGate={activeRewriteGate}
+                            taskProgress={activeTaskProgress}
+                            taskRunState={taskRunState}
+                            taskResult={activeTaskResult}
+                            taskSession={taskSession}
+                            taskError={taskError}
+                            taskTelemetry={taskTelemetry}
+                          />
+                        ) : null}
+                      </section>
+                    </div>
+                  </section>
                 </div>
-              </section>
-
-              {surfaceMode === "focus" && activeStep ? (
-                <aside className="construct-guide-rail">
-                  <FloatingGuideCard
-                    activeStep={activeStep}
-                    activeStepIndex={activeStepIndex}
-                    blueprint={blueprint}
-                    guidePrompts={guideQuestions}
-                    guideVisible={guideVisible}
-                    runtimeGuide={runtimeGuide}
-                    runtimeGuideBusy={runtimeGuideBusy}
-                    runtimeGuideError={runtimeGuideError}
-                    deepDiveBusy={deepDiveBusy}
-                    deepDiveError={deepDiveError}
-                    runtimeGuideEvents={runtimeGuideEvents}
-                    learnerModel={learnerModel}
-                    onToggleGuide={handleToggleGuide}
-                    onRequestDeepDive={() => {
-                      void handleRequestDeepDive();
-                    }}
-                    onSubmitTask={() => {
-                      void handleSubmitTask();
-                    }}
-                    onOpenBrief={() => {
-                      setSurfaceMode("brief");
-                      setStatusMessage(`Opened brief for ${activeStep.title}.`);
-                    }}
-                    onRefocus={() => {
-                      void handleApplyStep();
-                    }}
-                    onRevealHint={(level) => {
-                      setRevealedHintLevel((current) => {
-                        if (level <= current) {
-                          return current;
-                        }
-
-                        telemetryRef.current = {
-                          ...telemetryRef.current,
-                          hintsUsed: telemetryRef.current.hintsUsed + (level - current)
-                        };
-                        syncTelemetry();
-
-                        return level;
-                      });
-                    }}
-                    revealedHintLevel={revealedHintLevel}
-                    stepHints={visibleHints}
-                    attemptStatus={activeAttemptStatus}
-                    rewriteGate={activeRewriteGate}
-                    taskProgress={activeTaskProgress}
-                    taskRunState={taskRunState}
-                    taskResult={activeTaskResult}
-                    taskSession={taskSession}
-                    taskError={taskError}
-                    taskTelemetry={taskTelemetry}
-                  />
-                </aside>
-              ) : null}
-            </div>
-          </section>
-        </div>
-      )}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
 
       <AnimatePresence>
         {planningOverlayOpen ? (
@@ -1638,62 +1756,287 @@ function FloatingGuideCard({
   );
 }
 
-function ProjectsHome({
+function AppSidebar({
   projectsDashboard,
   runnerHealth,
-  projectsError,
   dashboardBusy,
+  currentView,
+  activeStep,
+  activeProjectName,
   onOpenProject,
+  onOpenProjects,
+  onOpenLesson,
+  onOpenCode,
+  onStartProject
+}: {
+  projectsDashboard: ProjectsDashboardResponse | null;
+  runnerHealth: RunnerHealth | null;
+  dashboardBusy: boolean;
+  currentView: "projects" | "lesson" | "code";
+  activeStep: BlueprintStep | null;
+  activeProjectName: string | null;
+  onOpenProject: (project: ProjectSummary) => void;
+  onOpenProjects: () => void;
+  onOpenLesson: () => void;
+  onOpenCode: () => void;
+  onStartProject: () => void;
+}) {
+  const recentProjects = (projectsDashboard?.projects ?? []).slice(0, 5);
+
+  return (
+    <aside className="construct-app-sidebar">
+      <div className="construct-app-sidebar-top">
+        <div className="construct-app-brand">
+          <span className="construct-app-brand-kicker">Construct</span>
+          <strong>{activeProjectName ?? "Teaching IDE"}</strong>
+        </div>
+
+        <button
+          type="button"
+          onClick={onStartProject}
+          className="construct-app-sidebar-primary"
+          disabled={dashboardBusy}
+        >
+          New project
+        </button>
+      </div>
+
+      <nav className="construct-app-nav" aria-label="App sections">
+        <button
+          type="button"
+          onClick={onOpenProjects}
+          className={`construct-app-nav-item ${currentView === "projects" ? "is-active" : ""}`}
+        >
+          Projects
+        </button>
+        <button
+          type="button"
+          onClick={onOpenLesson}
+          className={`construct-app-nav-item ${currentView === "lesson" ? "is-active" : ""}`}
+          disabled={!activeStep}
+        >
+          Lesson
+        </button>
+        <button
+          type="button"
+          onClick={onOpenCode}
+          className={`construct-app-nav-item ${currentView === "code" ? "is-active" : ""}`}
+          disabled={!activeStep}
+        >
+          Code
+        </button>
+      </nav>
+
+      <section className="construct-app-sidebar-section">
+        <div className="construct-app-sidebar-section-header">
+          <span className="construct-panel-kicker">Recents</span>
+        </div>
+
+        {recentProjects.length > 0 ? (
+          <div className="construct-app-recent-list">
+            {recentProjects.map((project) => (
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => {
+                  onOpenProject(project);
+                }}
+                className={`construct-app-recent-item ${
+                  projectsDashboard?.activeProjectId === project.id ? "is-active" : ""
+                }`}
+                disabled={dashboardBusy}
+              >
+                <strong>{project.name}</strong>
+                <span>{project.currentStepTitle ?? project.description}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="construct-app-sidebar-empty">No projects yet.</p>
+        )}
+      </section>
+
+      <section className="construct-app-sidebar-section construct-app-sidebar-section--meta">
+        <div className="construct-app-meta-row">
+          <span>Runner</span>
+          <strong>{runnerHealth?.status ?? "offline"}</strong>
+        </div>
+        <div className="construct-app-meta-row">
+          <span>Projects</span>
+          <strong>{projectsDashboard?.projects.length ?? 0}</strong>
+        </div>
+      </section>
+    </aside>
+  );
+}
+
+function WorkbenchTopbar({
+  currentView,
+  activeProjectName,
+  activeStepTitle,
+  activeFilePath,
+  runnerHealth,
+  saveStateLabel,
+  onOpenProjects,
+  onOpenLesson,
+  onOpenCode,
   onStartProject,
   onToggleTheme,
   theme
 }: {
+  currentView: "projects" | "lesson" | "code";
+  activeProjectName: string | null;
+  activeStepTitle: string | null;
+  activeFilePath: string | null;
+  runnerHealth: RunnerHealth | null;
+  saveStateLabel: string;
+  onOpenProjects: () => void;
+  onOpenLesson: () => void;
+  onOpenCode: () => void;
+  onStartProject: () => void;
+  onToggleTheme: () => void;
+  theme: ThemeMode;
+}) {
+  return (
+    <header className="construct-workbench-topbar">
+      <div className="construct-workbench-topbar-context">
+        <span className="construct-panel-kicker">
+          {currentView === "projects" ? "Projects" : activeProjectName ?? "Workspace"}
+        </span>
+        <strong>
+          {currentView === "projects"
+            ? "Return to any saved project and keep learning."
+            : activeFilePath ?? activeStepTitle ?? activeProjectName ?? "No file focused"}
+        </strong>
+      </div>
+
+      <div className="construct-workbench-mode-switch" role="tablist" aria-label="Current view">
+        <button
+          type="button"
+          onClick={onOpenProjects}
+          className={`construct-workbench-mode-button ${
+            currentView === "projects" ? "is-active" : ""
+          }`}
+        >
+          Projects
+        </button>
+        <button
+          type="button"
+          onClick={onOpenLesson}
+          className={`construct-workbench-mode-button ${
+            currentView === "lesson" ? "is-active" : ""
+          }`}
+        >
+          Learn
+        </button>
+        <button
+          type="button"
+          onClick={onOpenCode}
+          className={`construct-workbench-mode-button ${
+            currentView === "code" ? "is-active" : ""
+          }`}
+        >
+          Code
+        </button>
+      </div>
+
+      <div className="construct-workbench-topbar-actions">
+        <span className="construct-toolbar-pill">{runnerHealth?.status ?? "offline"}</span>
+        <span className="construct-toolbar-pill">{saveStateLabel}</span>
+        <button type="button" onClick={onStartProject} className="construct-secondary-button">
+          New
+        </button>
+        <button type="button" onClick={onToggleTheme} className="construct-theme-toggle">
+          {theme === "light" ? "Dark" : "Light"}
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function ProjectsHome({
+  projectsDashboard,
+  learnerProfile,
+  runnerHealth,
+  projectsError,
+  dashboardBusy,
+  onOpenProject,
+  onStartProject
+}: {
   projectsDashboard: ProjectsDashboardResponse | null;
+  learnerProfile: LearnerProfileResponse | null;
   runnerHealth: RunnerHealth | null;
   projectsError: string;
   dashboardBusy: boolean;
   onOpenProject: (project: ProjectSummary) => void;
   onStartProject: () => void;
-  onToggleTheme: () => void;
-  theme: ThemeMode;
 }) {
   const projects = projectsDashboard?.projects ?? [];
   const activeProject =
     projectsDashboard?.activeProjectId
       ? projects.find((project) => project.id === projectsDashboard.activeProjectId) ?? null
       : null;
-  const inProgressProjects = projects.filter((project) => project.status === "in-progress");
-  const recentProjects = projects.slice(0, 6);
   const completedProjects = projects.filter((project) => project.status === "completed").length;
+  const knowledgeBase = learnerProfile?.knowledgeBase ?? null;
+  const knowledgeConcepts = knowledgeBase
+    ? knowledgeBase.concepts
+        .slice()
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    : [];
+  const recentGoals = knowledgeBase
+    ? knowledgeBase.goals
+        .slice()
+        .sort((left, right) => right.lastPlannedAt.localeCompare(left.lastPlannedAt))
+        .slice(0, 5)
+    : [];
+  const historyEntries = learnerProfile?.learnerModel?.history ?? [];
+  const knowledgeByCategory = {
+    language: knowledgeConcepts.filter((concept) => concept.category === "language"),
+    domain: knowledgeConcepts.filter((concept) => concept.category === "domain"),
+    workflow: knowledgeConcepts.filter((concept) => concept.category === "workflow")
+  };
+  const comfortableConcepts = knowledgeConcepts.filter(
+    (concept) => concept.confidence === "comfortable"
+  ).length;
+  const shakyConcepts = knowledgeConcepts.filter((concept) => concept.confidence === "shaky").length;
+  const newConcepts = knowledgeConcepts.filter((concept) => concept.confidence === "new").length;
+  const totalHintsUsed = Object.values(learnerProfile?.learnerModel?.hintsUsed ?? {}).reduce(
+    (sum, value) => sum + value,
+    0
+  );
+  const passedAttempts = historyEntries.filter((entry) => entry.status === "passed").length;
+  const strugglingAttempts = historyEntries.filter(
+    (entry) => entry.status === "failed" || entry.status === "needs-review"
+  ).length;
 
   return (
     <section className="construct-home">
-      <div className="construct-home-shine" aria-hidden="true" />
       <header className="construct-home-header">
         <div className="construct-home-header-copy">
           <span className="construct-home-kicker">Projects</span>
-          <h1 className="construct-home-title">Build, learn, and jump back in without losing context.</h1>
+          <h1 className="construct-home-title">Pick up where you left off.</h1>
           <p className="construct-home-copy">
-            Construct keeps every project, active step, and lesson state in the backend so
-            you can return to the exact point where you left off.
+            Use the sidebar to jump between saved projects. This space shows the active
+            project and the learner knowledge base the Architect is already using to
+            tailor future questions, lesson depth, and step order.
           </p>
         </div>
 
         <div className="construct-home-actions">
-          <span className="construct-toolbar-pill">
-            {runnerHealth?.status ?? "offline"}
-          </span>
-          <button type="button" onClick={onToggleTheme} className="construct-theme-toggle">
-            {theme === "light" ? "Dark" : "Light"} mode
-          </button>
-          <button
-            type="button"
-            onClick={onStartProject}
-            className="construct-primary-button"
-            disabled={dashboardBusy}
-          >
-            New project
-          </button>
+          <div className="construct-home-stats-inline">
+            <div className="construct-home-inline-stat">
+              <span>Runner</span>
+              <strong>{runnerHealth?.status ?? "offline"}</strong>
+            </div>
+            <div className="construct-home-inline-stat">
+              <span>Projects</span>
+              <strong>{projects.length}</strong>
+            </div>
+            <div className="construct-home-inline-stat">
+              <span>Completed</span>
+              <strong>{completedProjects}</strong>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -1701,119 +2044,52 @@ function ProjectsHome({
         <div className="construct-home-error">{projectsError}</div>
       ) : null}
 
-      <div className="construct-home-shell">
-        <aside className="construct-home-column construct-home-column--sidebar">
-          <section className="construct-home-section">
-            <div className="construct-home-panel-header">
-              <div>
-                <span className="construct-home-section-kicker">In progress</span>
-                <h2>Continue</h2>
-              </div>
-            </div>
-
-            {inProgressProjects.length > 0 ? (
-              <div className="construct-project-list">
-                {inProgressProjects.map((project) => (
-                  <button
-                    type="button"
-                    key={project.id}
-                    onClick={() => {
-                      onOpenProject(project);
-                    }}
-                    className="construct-project-card"
-                    disabled={dashboardBusy}
-                  >
-                    <div className="construct-project-card-header">
-                      <strong>{project.name}</strong>
-                      <span>{project.language}</span>
-                    </div>
-                    <p>{project.currentStepTitle ?? project.description}</p>
-                    <div className="construct-project-card-footer">
-                      <span>
-                        Step{" "}
-                        {project.currentStepIndex !== null
-                          ? project.currentStepIndex + 1
-                          : 1}
-                        /{Math.max(project.totalSteps, 1)}
-                      </span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="construct-home-empty">
-                No active projects yet. The first generated project will appear here.
-              </div>
-            )}
-          </section>
-
-          <section className="construct-home-section">
-            <div className="construct-home-panel-header">
-              <div>
-                <span className="construct-home-section-kicker">Recent</span>
-                <h2>Project history</h2>
-              </div>
-            </div>
-
-            {recentProjects.length > 0 ? (
-              <div className="construct-recent-list">
-                {recentProjects.map((project) => (
-                  <button
-                    type="button"
-                    key={project.id}
-                    onClick={() => {
-                      onOpenProject(project);
-                    }}
-                    className="construct-recent-row"
-                    disabled={dashboardBusy}
-                  >
-                    <div>
-                      <strong>{project.name}</strong>
-                      <p>{project.currentStepTitle ?? project.description}</p>
-                    </div>
-                    <div className="construct-recent-row-meta">
-                      <span>{project.status}</span>
-                      <span>{formatProjectTimestamp(project.lastOpenedAt ?? project.updatedAt)}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="construct-home-empty">
-                No projects yet. Start one and it will be persisted here.
-              </div>
-            )}
-          </section>
-        </aside>
-
-        <section className="construct-home-column construct-home-column--main">
+      <div className="construct-home-dashboard">
+        <section className="construct-home-surface construct-home-surface--project">
           {activeProject ? (
-            <section className="construct-home-hero">
-              <div className="construct-home-hero-copy">
-                <span className="construct-home-section-kicker">Active project</span>
-                <h2>{activeProject.name}</h2>
-                <p>{activeProject.description}</p>
-                <div className="construct-home-meta-row">
-                  <span>{activeProject.language}</span>
-                  <span>
-                    Step{" "}
-                    {activeProject.currentStepIndex !== null
-                      ? activeProject.currentStepIndex + 1
-                      : 1}
-                    /{Math.max(activeProject.totalSteps, 1)}
-                  </span>
-                  <span>{activeProject.completedStepsCount} completed</span>
-                  <span>
-                    {formatProjectTimestamp(activeProject.lastOpenedAt ?? activeProject.updatedAt)}
-                  </span>
+            <>
+              <div className="construct-home-surface-header">
+                <div>
+                  <span className="construct-home-section-kicker">Active project</span>
+                  <h2>{activeProject.name}</h2>
                 </div>
+                <span className="construct-toolbar-pill">
+                  {activeProject.currentStepIndex !== null
+                    ? activeProject.currentStepIndex + 1
+                    : 1}
+                  /{Math.max(activeProject.totalSteps, 1)}
+                </span>
               </div>
 
-              <div className="construct-home-hero-actions">
-                <div className="construct-home-hero-stat">
-                  <span className="construct-home-section-kicker">Current step</span>
+              <p className="construct-home-surface-copy">{activeProject.description}</p>
+
+              <div className="construct-home-fact-grid">
+                <div className="construct-home-fact">
+                  <span>Current step</span>
                   <strong>{activeProject.currentStepTitle ?? "Ready to begin"}</strong>
                 </div>
+                <div className="construct-home-fact">
+                  <span>Language</span>
+                  <strong>{activeProject.language}</strong>
+                </div>
+                <div className="construct-home-fact">
+                  <span>Completed</span>
+                  <strong>{activeProject.completedStepsCount}</strong>
+                </div>
+                <div className="construct-home-fact">
+                  <span>Last opened</span>
+                  <strong>
+                    {formatProjectTimestamp(activeProject.lastOpenedAt ?? activeProject.updatedAt)}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="construct-home-inline-note">
+                The sidebar handles project switching. This panel stays focused on the
+                project you are currently advancing.
+              </div>
+
+              <div className="construct-home-surface-actions">
                 <button
                   type="button"
                   onClick={() => {
@@ -1825,19 +2101,25 @@ function ProjectsHome({
                   {dashboardBusy ? "Opening..." : "Resume project"}
                 </button>
               </div>
-            </section>
+            </>
           ) : (
-            <section className="construct-home-hero construct-home-hero--empty">
-              <div className="construct-home-hero-copy">
-                <span className="construct-home-section-kicker">Start</span>
-                <h2>Create a new guided project.</h2>
-                <p>
-                  Tell Construct what you want to build. The Architect will generate the
-                  project, lessons, checks, hidden tests, and implementation path around
-                  that goal.
-                </p>
+            <>
+              <div className="construct-home-surface-header">
+                <div>
+                  <span className="construct-home-section-kicker">Start</span>
+                  <h2>Create a new guided project.</h2>
+                </div>
               </div>
-              <div className="construct-home-hero-actions">
+              <p className="construct-home-surface-copy">
+                Tell Construct what you want to build. The Architect will generate the
+                project, lessons, checks, hidden tests, and implementation path around
+                that goal.
+              </p>
+              <div className="construct-home-inline-note">
+                Once the first project is planned, its current step will appear here and
+                the learner knowledge base will start filling in beside it.
+              </div>
+              <div className="construct-home-surface-actions">
                 <button
                   type="button"
                   onClick={onStartProject}
@@ -1847,53 +2129,178 @@ function ProjectsHome({
                   New project
                 </button>
               </div>
-            </section>
+            </>
           )}
         </section>
 
-        <aside className="construct-home-column construct-home-column--rail">
-          <section className="construct-home-section">
-            <div className="construct-home-panel-header">
-              <div>
-                <span className="construct-home-section-kicker">Workspace</span>
-                <h2>System state</h2>
-              </div>
+        <section className="construct-home-surface construct-home-surface--knowledge">
+          <div className="construct-home-surface-header">
+            <div>
+              <span className="construct-home-section-kicker">Learner profile</span>
+              <h2>Knowledge base</h2>
             </div>
-            <div className="construct-home-stats">
-              <div className="construct-home-stat-row">
-                <span>Runner</span>
-                <strong>{runnerHealth?.status ?? "offline"}</strong>
-              </div>
-              <div className="construct-home-stat-row">
-                <span>Projects</span>
-                <strong>{projects.length}</strong>
-              </div>
-              <div className="construct-home-stat-row">
-                <span>In progress</span>
-                <strong>{inProgressProjects.length}</strong>
-              </div>
-              <div className="construct-home-stat-row">
-                <span>Completed</span>
-                <strong>{completedProjects}</strong>
-              </div>
-            </div>
-          </section>
+            <span className="construct-toolbar-pill">{knowledgeConcepts.length}</span>
+          </div>
 
-          <section className="construct-home-section">
-            <div className="construct-home-panel-header">
-              <div>
-                <span className="construct-home-section-kicker">How it works</span>
-                <h2>Project flow</h2>
-              </div>
+          <p className="construct-home-surface-copy">
+            The Architect stores exact concepts here and reuses them when tailoring new
+            project questions, teaching depth, and build order.
+          </p>
+
+          <div className="construct-home-profile-stats">
+            <div className="construct-home-profile-stat">
+              <span>Comfortable</span>
+              <strong>{comfortableConcepts}</strong>
             </div>
-            <div className="construct-home-flow">
-              <p>1. Start a project with the Architect.</p>
-              <p>2. Tailor the teaching path and codebase.</p>
-              <p>3. Learn through lessons, checks, and real implementation work.</p>
-              <p>4. Jump back into any project from the stored current step.</p>
+            <div className="construct-home-profile-stat">
+              <span>Shaky</span>
+              <strong>{shakyConcepts}</strong>
             </div>
-          </section>
-        </aside>
+            <div className="construct-home-profile-stat">
+              <span>New</span>
+              <strong>{newConcepts}</strong>
+            </div>
+            <div className="construct-home-profile-stat">
+              <span>Goals tracked</span>
+              <strong>{recentGoals.length}</strong>
+            </div>
+          </div>
+
+          {knowledgeConcepts.length > 0 ? (
+            <div className="construct-home-knowledge-groups">
+              {(
+                [
+                  ["language", "Language"],
+                  ["domain", "Domain"],
+                  ["workflow", "Workflow"]
+                ] as const
+              ).map(([category, label]) => (
+                <section key={category} className="construct-home-knowledge-group">
+                  <div className="construct-home-knowledge-group-header">
+                    <h3>{label}</h3>
+                    <span>{knowledgeByCategory[category].length}</span>
+                  </div>
+
+                  {knowledgeByCategory[category].length > 0 ? (
+                    <div className="construct-home-knowledge-list">
+                      {knowledgeByCategory[category].map((concept) => (
+                        <div key={concept.id} className="construct-home-knowledge-item">
+                          <div className="construct-home-knowledge-item-head">
+                            <strong>{concept.label}</strong>
+                            <span
+                              className={`construct-home-confidence is-${concept.confidence}`}
+                            >
+                              {concept.confidence}
+                            </span>
+                          </div>
+                          <p>{concept.rationale}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="construct-home-empty">
+                      No {label.toLowerCase()} concepts recorded yet.
+                    </div>
+                  )}
+                </section>
+              ))}
+            </div>
+          ) : (
+            <div className="construct-home-empty">
+              No stored learner knowledge yet. Start a project and answer the Architect's
+              tailoring questions so Construct can build a concept-level profile.
+            </div>
+          )}
+        </section>
+      </div>
+
+      <div className="construct-home-dashboard-secondary">
+        <section className="construct-home-surface">
+          <div className="construct-home-surface-header">
+            <div>
+              <span className="construct-home-section-kicker">Goal history</span>
+              <h2>Recent planned goals</h2>
+            </div>
+          </div>
+
+          {recentGoals.length > 0 ? (
+            <div className="construct-home-goal-list">
+              {recentGoals.map((goal) => (
+                <div key={`${goal.goal}-${goal.lastPlannedAt}`} className="construct-home-goal-item">
+                  <div className="construct-home-goal-head">
+                    <strong>{goal.goal}</strong>
+                    <span>{formatProjectTimestamp(goal.lastPlannedAt)}</span>
+                  </div>
+                  <p>
+                    {goal.language} · {goal.domain}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="construct-home-empty">
+              Planned goals will accumulate here once the Architect has tailored a few
+              projects around the learner.
+            </div>
+          )}
+        </section>
+
+        <section className="construct-home-surface">
+          <div className="construct-home-surface-header">
+            <div>
+              <span className="construct-home-section-kicker">Learning signals</span>
+              <h2>Runtime evidence</h2>
+            </div>
+          </div>
+
+          <div className="construct-home-signal-grid">
+            <div className="construct-home-fact">
+              <span>Attempt history</span>
+              <strong>{historyEntries.length}</strong>
+            </div>
+            <div className="construct-home-fact">
+              <span>Passed attempts</span>
+              <strong>{passedAttempts}</strong>
+            </div>
+            <div className="construct-home-fact">
+              <span>Needs work</span>
+              <strong>{strugglingAttempts}</strong>
+            </div>
+            <div className="construct-home-fact">
+              <span>Hints used</span>
+              <strong>{totalHintsUsed}</strong>
+            </div>
+          </div>
+
+          {historyEntries.length > 0 ? (
+            <div className="construct-home-signal-list">
+              {historyEntries
+                .slice()
+                .reverse()
+                .slice(0, 5)
+                .map((entry) => (
+                  <div
+                    key={`${entry.stepId}-${entry.recordedAt}-${entry.attempt}`}
+                    className="construct-home-signal-item"
+                  >
+                    <div className="construct-home-signal-head">
+                      <strong>{entry.stepId}</strong>
+                      <span>{formatProjectTimestamp(entry.recordedAt)}</span>
+                    </div>
+                    <p>
+                      {entry.status} · attempt {entry.attempt} · {entry.timeSpentMs} ms ·
+                      hints {entry.hintsUsed}
+                    </p>
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <div className="construct-home-empty">
+              Task execution signals will appear here as the learner moves through code
+              steps and hidden tests.
+            </div>
+          )}
+        </section>
       </div>
     </section>
   );
@@ -1976,10 +2383,10 @@ function PlanningOverlay({
         <header className="construct-planning-header">
           <div className="construct-planning-header-copy">
             <span className="construct-brief-kicker">Architect</span>
-            <h1>Create a project path that actually fits the learner.</h1>
+            <h1>Create a new project.</h1>
             <p>
-              We start with the project goal, shape the teaching path, then generate the
-              real codebase, hidden tests, and course flow around it.
+              Describe the project once, then Construct will tailor the teaching path,
+              code tasks, and hidden tests around the learner.
             </p>
           </div>
           <div className="construct-planning-header-actions">
@@ -1997,12 +2404,12 @@ function PlanningOverlay({
         {!planningSession ? (
           <div className="construct-planning-start">
             <section className="construct-planning-composer">
-              <div className="construct-planning-composer-glow" aria-hidden="true" />
               <span className="construct-panel-kicker">Project goal</span>
-              <h2>What do you want to build and learn through?</h2>
+              <h2>Describe the project.</h2>
               <p>
-                Describe the real project. The Architect will tailor the implementation
-                path, lesson depth, and validation flow around this goal.
+                Tell Construct what you want to build. The Architect will shape the
+                lessons, checks, implementation order, and hidden validation around this
+                goal.
               </p>
               <textarea
                 value={planningGoal}
@@ -2016,8 +2423,8 @@ function PlanningOverlay({
                 <div className="construct-planning-style-copy">
                   <span className="construct-panel-kicker">Learning style</span>
                   <p>
-                    This guides how front-loaded the teaching should be before the learner
-                    starts implementing real code.
+                    This guides how much explanation should come before the learner starts
+                    writing code in the real project.
                   </p>
                 </div>
                 <div className="construct-segmented-list construct-segmented-list--inline">
@@ -2066,8 +2473,8 @@ function PlanningOverlay({
                   <span className="construct-tag">hidden tests</span>
                 </div>
                 <p>
-                  The agent creates a full project, then teaches the learner through it in
-                  a docs-like course flow before handing off to the editor.
+                  Construct creates the project, writes the course, prepares hidden tests,
+                  and then hands the learner into the code workspace at the right step.
                 </p>
               </section>
 
@@ -2097,7 +2504,7 @@ function PlanningOverlay({
               <h2 className="construct-modal-underlay-title">{planningGoal.trim()}</h2>
               <p>
                 Construct has finished the first pass and is now tailoring the project
-                path, teaching depth, and hidden tests before it generates the real
+                path, lesson depth, and hidden tests before it materializes the real
                 workspace.
               </p>
               <div className="construct-tag-list">
@@ -2999,6 +3406,23 @@ function FileIcon({ filePath }: { filePath: string }) {
   return <span className="construct-file-badge">{label}</span>;
 }
 
+function labelForEditorPath(filePath: string | null) {
+  if (!filePath) {
+    return "Untitled";
+  }
+
+  const segments = filePath.split("/");
+  return segments[segments.length - 1] ?? filePath;
+}
+
+function buildEditorBreadcrumb(projectName: string, filePath: string | null) {
+  if (!filePath) {
+    return [projectName];
+  }
+
+  return [projectName, ...filePath.split("/")];
+}
+
 function InfoPanel({
   title,
   body,
@@ -3018,6 +3442,7 @@ function InfoPanel({
 
 function MarkdownSlide({ markdown }: { markdown: string }) {
   const codeTheme = getConstructThemeMode() === "dark" ? oneDark : oneLight;
+  const normalizedMarkdown = normalizeLessonMarkdown(markdown);
   const markdownComponents: Components = {
     code({ className, children, ...props }) {
       const languageMatch = /language-([\w-]+)/.exec(className ?? "");
@@ -3066,6 +3491,30 @@ function MarkdownSlide({ markdown }: { markdown: string }) {
     a({ className, ...props }) {
       return <a className={`construct-markdown-link ${className ?? ""}`.trim()} {...props} />;
     },
+    ul({ className, ...props }) {
+      return (
+        <ul
+          className={`construct-markdown-list construct-markdown-list--unordered ${className ?? ""}`.trim()}
+          {...props}
+        />
+      );
+    },
+    ol({ className, ...props }) {
+      return (
+        <ol
+          className={`construct-markdown-list construct-markdown-list--ordered ${className ?? ""}`.trim()}
+          {...props}
+        />
+      );
+    },
+    li({ className, ...props }) {
+      return (
+        <li
+          className={`construct-markdown-list-item ${className ?? ""}`.trim()}
+          {...props}
+        />
+      );
+    },
     table({ className, ...props }) {
       return (
         <div className="construct-markdown-table-wrap">
@@ -3089,10 +3538,78 @@ function MarkdownSlide({ markdown }: { markdown: string }) {
   return (
     <div className="construct-markdown">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-        {markdown}
+        {normalizedMarkdown}
       </ReactMarkdown>
     </div>
   );
+}
+
+function normalizeLessonMarkdown(markdown: string): string {
+  const sourceLines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const normalized: string[] = [];
+  let inFence = false;
+  let colonListActive = false;
+
+  for (const line of sourceLines) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      inFence = !inFence;
+      normalized.push(line);
+      continue;
+    }
+
+    if (inFence) {
+      normalized.push(line);
+      continue;
+    }
+
+    if (!trimmed) {
+      normalized.push("");
+      continue;
+    }
+
+    let nextLine = line
+      .replace(/^(\s*)[•●▪◦‣]\s+/, "$1- ")
+      .replace(/^(\s*)[–—]\s+/, "$1- ");
+
+    const isExplicitListItem = /^\s*([-*+]|\d+\.)\s+/.test(nextLine);
+    const isIndentedContent = /^\s{2,}\S/.test(nextLine);
+    const isHeadingLike = /^\s*#{1,6}\s+/.test(nextLine);
+    const isBlockLike =
+      /^\s*(>|```|\|)/.test(nextLine) || /^[-*_]{3,}\s*$/.test(trimmed);
+    const isPlainFollowupLine =
+      colonListActive &&
+      !isExplicitListItem &&
+      !isIndentedContent &&
+      !isHeadingLike &&
+      !isBlockLike &&
+      !/[.:]$/.test(trimmed) &&
+      /^[A-Za-z0-9`"'[(]/.test(trimmed);
+
+    if (isIndentedContent && !isExplicitListItem && colonListActive) {
+      nextLine = `- ${nextLine.trim()}`;
+    }
+
+    if (isPlainFollowupLine) {
+      nextLine = `- ${trimmed}`;
+    }
+
+    normalized.push(nextLine);
+
+    if (/:\s*$/.test(trimmed)) {
+      colonListActive = true;
+      continue;
+    }
+
+    if (isExplicitListItem || (isIndentedContent && colonListActive)) {
+      continue;
+    }
+
+    colonListActive = false;
+  }
+
+  return normalized.join("\n");
 }
 
 function MetadataList({ title, values }: { title: string; values: string[] }) {

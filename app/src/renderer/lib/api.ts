@@ -6,6 +6,7 @@ import type {
   AgentJobSnapshot,
   BlueprintEnvelope,
   CurrentPlanningSessionResponse,
+  LearnerProfileResponse,
   LearnerModel,
   ProjectSelectionResponse,
   ProjectsDashboardResponse,
@@ -216,6 +217,12 @@ export async function fetchTaskProgress(
 
 export async function fetchLearnerModel(signal?: AbortSignal): Promise<LearnerModel> {
   return getJson<LearnerModel>("/learner/model", { signal });
+}
+
+export async function fetchLearnerProfile(
+  signal?: AbortSignal
+): Promise<LearnerProfileResponse> {
+  return getJson<LearnerProfileResponse>("/learner/profile", { signal });
 }
 
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {

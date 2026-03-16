@@ -20,6 +20,7 @@ import {
   DependencyGraphSchema,
   GeneratedProjectPlanSchema,
   KnowledgeGraphSchema,
+  LearnerProfileResponseSchema,
   PlanningQuestionSchema,
   PlanningSessionCompleteRequestSchema,
   PlanningSessionCompleteResponseSchema,
@@ -42,6 +43,8 @@ import {
   type ConceptConfidence,
   type GeneratedProjectPlan,
   type KnowledgeGraph,
+  type LearnerModel,
+  type LearnerProfileResponse,
   type LearningStyle,
   type PlanningQuestion,
   type PlanningSession,
@@ -457,6 +460,18 @@ export class ConstructAgentService {
   async getCurrentPlanningState(): Promise<PlanningStateFile> {
     const state = await this.readPlanningState();
     return CurrentPlanningSessionResponseSchema.parse(state);
+  }
+
+  async getLearnerProfile(
+    learnerModel: LearnerModel | null = null
+  ): Promise<LearnerProfileResponse> {
+    const knowledgeBase = await this.readKnowledgeBase();
+
+    return LearnerProfileResponseSchema.parse({
+      userId: getCurrentUserId(),
+      knowledgeBase,
+      learnerModel
+    });
   }
 
   async getActiveBlueprintPath(): Promise<string | null> {

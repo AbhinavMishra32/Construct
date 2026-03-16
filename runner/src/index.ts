@@ -7,6 +7,7 @@ import {
   AgentJobSnapshotSchema,
   BlueprintDeepDiveRequestSchema,
   BlueprintTaskRequestSchema,
+  LearnerProfileResponseSchema,
   ProjectCurrentStepRequestSchema,
   ProjectSelectionRequestSchema,
   PlanningSessionCompleteRequestSchema,
@@ -429,6 +430,23 @@ const server = http.createServer(async (request, response) => {
 
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify(await workspaceContext.taskLifecycle.getLearnerModel()));
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/learner/profile") {
+      const workspaceContext = await getWorkspaceContext();
+      const learnerModel = workspaceContext
+        ? await workspaceContext.taskLifecycle.getLearnerModel()
+        : null;
+
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify(
+          LearnerProfileResponseSchema.parse(
+            await getConstructAgent().getLearnerProfile(learnerModel)
+          )
+        )
+      );
       return;
     }
 
