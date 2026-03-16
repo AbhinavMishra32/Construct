@@ -979,270 +979,274 @@ export default function App() {
         />
       ) : (
         <div className="construct-layout">
-        <aside className="construct-explorer">
-          <div className="construct-filter-shell">
-            <input
-              value={filterQuery}
-              onChange={(event) => {
-                setFilterQuery(event.target.value);
-              }}
-              placeholder="Filter files..."
-              className="construct-filter-input"
-              aria-label="Filter files"
-            />
-          </div>
-
-          <div className="construct-explorer-scroll">
-            {filteredTree.length > 0 ? (
-              <nav className="construct-tree" aria-label="Workspace files">
-                {filteredTree.map((node) => (
-                  <ExplorerTreeNode
-                    key={node.path}
-                    node={node}
-                    activeFilePath={activeFilePath}
-                    onSelectFile={handleFileClick}
-                    expandedDirectories={expandedDirectories}
-                    onToggleDirectory={(path) => {
-                      setExpandedDirectories((current) => ({
-                        ...current,
-                        [path]: !(current[path] ?? true)
-                      }));
-                    }}
-                    forceExpanded={explorerIsFiltered}
-                  />
-                ))}
-              </nav>
-            ) : (
-              <div className="construct-explorer-empty">
-                {filterQuery.trim().length > 0
-                  ? "No files match the current filter."
-                  : "No files loaded yet."}
-              </div>
-            )}
-          </div>
-        </aside>
-
-        <section className="construct-stage">
-          <section className="construct-editor-shell">
-            <header className="construct-editor-chrome">
-              <div className="construct-editor-chrome-left">
-                <span className="construct-toolbar-pill">{saveStateLabel}</span>
-                <span className="construct-toolbar-pill">
-                  {runnerHealth?.status ?? "offline"}
-                </span>
-                <span className="construct-toolbar-pill">{taskAttemptLabel}</span>
-                <span className="construct-toolbar-pill">{snapshotLabel}</span>
-              </div>
-
-              <div className="construct-editor-chrome-center">
-                <div className="construct-toolbar-center">
-                  <span className="construct-toolbar-title">
-                    {activeStep ? activeStep.title : blueprint?.name ?? "Construct"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="construct-editor-chrome-right">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDashboardOpen(true);
-                    setPlanningOverlayOpen(false);
-                    setStatusMessage("Opened projects dashboard.");
-                  }}
-                  className="construct-secondary-button"
-                >
-                  Projects
-                </button>
-                <button
-                  type="button"
-                  onClick={openFreshPlanningOverlay}
-                  className="construct-secondary-button"
-                >
-                  New
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleTheme}
-                  className="construct-theme-toggle"
-                >
-                  {theme === "light" ? "Dark" : "Light"}
-                </button>
-              </div>
-            </header>
-
-            {activeFilePath ? (
-              <Editor
-                height="100%"
-                theme={editorTheme}
-                path={activeFilePath}
-                language={languageForPath(activeFilePath)}
-                value={editorValue}
-                onMount={(editor) => {
-                  editorRef.current = editor;
-                  applyAnchorDecoration(editor, anchorLocation, decorationIdsRef.current, {
-                    setDecorationIds(nextIds) {
-                      decorationIdsRef.current = nextIds;
-                    }
-                  });
-
-                  const domNode = editor.getDomNode();
-                  const pasteTarget = domNode?.querySelector(".inputarea") ?? domNode;
-                  const handlePaste = (event: Event) => {
-                    if (rewriteGateRef.current) {
-                      event.preventDefault();
-                      setStatusMessage(
-                        "Verification rewrite is active. Retype the anchored code from memory instead of pasting."
-                      );
-                      return;
-                    }
-
-                    const clipboardEvent = event as ClipboardEvent;
-                    const pastedText = clipboardEvent.clipboardData?.getData("text") ?? "";
-
-                    if (pastedText.length > 0) {
-                      pendingPasteCharsRef.current += pastedText.length;
-                    }
-                  };
-                  const changeDisposable = editor.onDidChangeModelContent((event) => {
-                    if (event.isFlush || event.isUndoing || event.isRedoing) {
-                      return;
-                    }
-
-                    let insertedCharacters = event.changes.reduce(
-                      (total, change) => total + change.text.length,
-                      0
-                    );
-
-                    if (insertedCharacters <= 0) {
-                      return;
-                    }
-
-                    if (pendingPasteCharsRef.current > 0) {
-                      const pastedCharacters = Math.min(
-                        pendingPasteCharsRef.current,
-                        insertedCharacters
-                      );
-                      telemetryRef.current = {
-                        ...telemetryRef.current,
-                        pastedChars: telemetryRef.current.pastedChars + pastedCharacters
-                      };
-                      pendingPasteCharsRef.current -= pastedCharacters;
-                      insertedCharacters -= pastedCharacters;
-                    }
-
-                    if (insertedCharacters > 0) {
-                      telemetryRef.current = {
-                        ...telemetryRef.current,
-                        typedChars: telemetryRef.current.typedChars + insertedCharacters
-                      };
-                    }
-
-                    syncTelemetry();
-                  });
-
-                  pasteTarget?.addEventListener("paste", handlePaste);
-                  editor.onDidDispose(() => {
-                    changeDisposable.dispose();
-                    pasteTarget?.removeEventListener("paste", handlePaste);
-                  });
+          <aside className="construct-explorer">
+            <div className="construct-filter-shell">
+              <input
+                value={filterQuery}
+                onChange={(event) => {
+                  setFilterQuery(event.target.value);
                 }}
-                onChange={(value) => {
-                  setEditorValue(value ?? "");
-                }}
-                options={{
-                  fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
-                  fontSize: 14,
-                  smoothScrolling: true,
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  glyphMargin: true,
-                  lineNumbersMinChars: 4,
-                  tabSize: 2,
-                  padding: {
-                    top: 140,
-                    bottom: 112
-                  }
-                }}
+                placeholder="Filter files..."
+                className="construct-filter-input"
+                aria-label="Filter files"
               />
-            ) : (
-              <div className="construct-editor-empty">
-                <span>MONACO EDITOR</span>
-              </div>
-            )}
-
-            <div className="construct-status-strip">
-              <span className="construct-status-item">
-                {activeFilePath || "No file focused"}
-              </span>
-              <span className="construct-status-item">
-                {statusMessage}
-              </span>
-              <span className="construct-status-item">
-                {activeStep ? `Step ${activeStepIndex + 1}` : "No step"}
-              </span>
-              {loadError ? (
-                <span className="construct-status-item is-error">{loadError}</span>
-              ) : null}
             </div>
 
-            {surfaceMode === "focus" && activeStep ? (
-              <FloatingGuideCard
-                activeStep={activeStep}
-                activeStepIndex={activeStepIndex}
-                blueprint={blueprint}
-                guidePrompts={guideQuestions}
-                guideVisible={guideVisible}
-                runtimeGuide={runtimeGuide}
-                runtimeGuideBusy={runtimeGuideBusy}
-                runtimeGuideError={runtimeGuideError}
-                deepDiveBusy={deepDiveBusy}
-                deepDiveError={deepDiveError}
-                runtimeGuideEvents={runtimeGuideEvents}
-                learnerModel={learnerModel}
-                onToggleGuide={handleToggleGuide}
-                onRequestDeepDive={() => {
-                  void handleRequestDeepDive();
-                }}
-                onSubmitTask={() => {
-                  void handleSubmitTask();
-                }}
-                onOpenBrief={() => {
-                  setSurfaceMode("brief");
-                  setStatusMessage(`Opened brief for ${activeStep.title}.`);
-                }}
-                onRefocus={() => {
-                  void handleApplyStep();
-                }}
-                onRevealHint={(level) => {
-                  setRevealedHintLevel((current) => {
-                    if (level <= current) {
-                      return current;
-                    }
+            <div className="construct-explorer-scroll">
+              {filteredTree.length > 0 ? (
+                <nav className="construct-tree" aria-label="Workspace files">
+                  {filteredTree.map((node) => (
+                    <ExplorerTreeNode
+                      key={node.path}
+                      node={node}
+                      activeFilePath={activeFilePath}
+                      onSelectFile={handleFileClick}
+                      expandedDirectories={expandedDirectories}
+                      onToggleDirectory={(path) => {
+                        setExpandedDirectories((current) => ({
+                          ...current,
+                          [path]: !(current[path] ?? true)
+                        }));
+                      }}
+                      forceExpanded={explorerIsFiltered}
+                    />
+                  ))}
+                </nav>
+              ) : (
+                <div className="construct-explorer-empty">
+                  {filterQuery.trim().length > 0
+                    ? "No files match the current filter."
+                    : "No files loaded yet."}
+                </div>
+              )}
+            </div>
+          </aside>
 
-                    telemetryRef.current = {
-                      ...telemetryRef.current,
-                      hintsUsed: telemetryRef.current.hintsUsed + (level - current)
-                    };
-                    syncTelemetry();
+          <section className={`construct-stage ${surfaceMode === "focus" && activeStep ? "has-guide-rail" : ""}`}>
+            <div className="construct-workspace-shell">
+              <section className="construct-editor-shell">
+                <header className="construct-editor-chrome">
+                  <div className="construct-editor-chrome-left">
+                    <span className="construct-toolbar-pill">{saveStateLabel}</span>
+                    <span className="construct-toolbar-pill">
+                      {runnerHealth?.status ?? "offline"}
+                    </span>
+                    <span className="construct-toolbar-pill">{taskAttemptLabel}</span>
+                    <span className="construct-toolbar-pill">{snapshotLabel}</span>
+                  </div>
 
-                    return level;
-                  });
-                }}
-                revealedHintLevel={revealedHintLevel}
-                stepHints={visibleHints}
-                attemptStatus={activeAttemptStatus}
-                rewriteGate={activeRewriteGate}
-                taskProgress={activeTaskProgress}
-                taskRunState={taskRunState}
-                taskResult={activeTaskResult}
-                taskSession={taskSession}
-                taskError={taskError}
-                taskTelemetry={taskTelemetry}
-              />
-            ) : null}
+                  <div className="construct-editor-chrome-center">
+                    <div className="construct-toolbar-center">
+                      <span className="construct-toolbar-title">
+                        {activeStep ? activeStep.title : blueprint?.name ?? "Construct"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="construct-editor-chrome-right">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDashboardOpen(true);
+                        setPlanningOverlayOpen(false);
+                        setStatusMessage("Opened projects dashboard.");
+                      }}
+                      className="construct-secondary-button"
+                    >
+                      Projects
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openFreshPlanningOverlay}
+                      className="construct-secondary-button"
+                    >
+                      New
+                    </button>
+                    <button
+                      type="button"
+                      onClick={toggleTheme}
+                      className="construct-theme-toggle"
+                    >
+                      {theme === "light" ? "Dark" : "Light"}
+                    </button>
+                  </div>
+                </header>
+
+                {activeFilePath ? (
+                  <Editor
+                    height="100%"
+                    theme={editorTheme}
+                    path={activeFilePath}
+                    language={languageForPath(activeFilePath)}
+                    value={editorValue}
+                    onMount={(editor) => {
+                      editorRef.current = editor;
+                      applyAnchorDecoration(editor, anchorLocation, decorationIdsRef.current, {
+                        setDecorationIds(nextIds) {
+                          decorationIdsRef.current = nextIds;
+                        }
+                      });
+
+                      const domNode = editor.getDomNode();
+                      const pasteTarget = domNode?.querySelector(".inputarea") ?? domNode;
+                      const handlePaste = (event: Event) => {
+                        if (rewriteGateRef.current) {
+                          event.preventDefault();
+                          setStatusMessage(
+                            "Verification rewrite is active. Retype the anchored code from memory instead of pasting."
+                          );
+                          return;
+                        }
+
+                        const clipboardEvent = event as ClipboardEvent;
+                        const pastedText = clipboardEvent.clipboardData?.getData("text") ?? "";
+
+                        if (pastedText.length > 0) {
+                          pendingPasteCharsRef.current += pastedText.length;
+                        }
+                      };
+                      const changeDisposable = editor.onDidChangeModelContent((event) => {
+                        if (event.isFlush || event.isUndoing || event.isRedoing) {
+                          return;
+                        }
+
+                        let insertedCharacters = event.changes.reduce(
+                          (total, change) => total + change.text.length,
+                          0
+                        );
+
+                        if (insertedCharacters <= 0) {
+                          return;
+                        }
+
+                        if (pendingPasteCharsRef.current > 0) {
+                          const pastedCharacters = Math.min(
+                            pendingPasteCharsRef.current,
+                            insertedCharacters
+                          );
+                          telemetryRef.current = {
+                            ...telemetryRef.current,
+                            pastedChars: telemetryRef.current.pastedChars + pastedCharacters
+                          };
+                          pendingPasteCharsRef.current -= pastedCharacters;
+                          insertedCharacters -= pastedCharacters;
+                        }
+
+                        if (insertedCharacters > 0) {
+                          telemetryRef.current = {
+                            ...telemetryRef.current,
+                            typedChars: telemetryRef.current.typedChars + insertedCharacters
+                          };
+                        }
+
+                        syncTelemetry();
+                      });
+
+                      pasteTarget?.addEventListener("paste", handlePaste);
+                      editor.onDidDispose(() => {
+                        changeDisposable.dispose();
+                        pasteTarget?.removeEventListener("paste", handlePaste);
+                      });
+                    }}
+                    onChange={(value) => {
+                      setEditorValue(value ?? "");
+                    }}
+                    options={{
+                      fontFamily: "'SF Mono', 'JetBrains Mono', monospace",
+                      fontSize: 14,
+                      smoothScrolling: true,
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      glyphMargin: true,
+                      lineNumbersMinChars: 4,
+                      tabSize: 2,
+                      padding: {
+                        top: 140,
+                        bottom: 112
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="construct-editor-empty">
+                    <span>MONACO EDITOR</span>
+                  </div>
+                )}
+
+                <div className="construct-status-strip">
+                  <span className="construct-status-item">
+                    {activeFilePath || "No file focused"}
+                  </span>
+                  <span className="construct-status-item">
+                    {statusMessage}
+                  </span>
+                  <span className="construct-status-item">
+                    {activeStep ? `Step ${activeStepIndex + 1}` : "No step"}
+                  </span>
+                  {loadError ? (
+                    <span className="construct-status-item is-error">{loadError}</span>
+                  ) : null}
+                </div>
+              </section>
+
+              {surfaceMode === "focus" && activeStep ? (
+                <aside className="construct-guide-rail">
+                  <FloatingGuideCard
+                    activeStep={activeStep}
+                    activeStepIndex={activeStepIndex}
+                    blueprint={blueprint}
+                    guidePrompts={guideQuestions}
+                    guideVisible={guideVisible}
+                    runtimeGuide={runtimeGuide}
+                    runtimeGuideBusy={runtimeGuideBusy}
+                    runtimeGuideError={runtimeGuideError}
+                    deepDiveBusy={deepDiveBusy}
+                    deepDiveError={deepDiveError}
+                    runtimeGuideEvents={runtimeGuideEvents}
+                    learnerModel={learnerModel}
+                    onToggleGuide={handleToggleGuide}
+                    onRequestDeepDive={() => {
+                      void handleRequestDeepDive();
+                    }}
+                    onSubmitTask={() => {
+                      void handleSubmitTask();
+                    }}
+                    onOpenBrief={() => {
+                      setSurfaceMode("brief");
+                      setStatusMessage(`Opened brief for ${activeStep.title}.`);
+                    }}
+                    onRefocus={() => {
+                      void handleApplyStep();
+                    }}
+                    onRevealHint={(level) => {
+                      setRevealedHintLevel((current) => {
+                        if (level <= current) {
+                          return current;
+                        }
+
+                        telemetryRef.current = {
+                          ...telemetryRef.current,
+                          hintsUsed: telemetryRef.current.hintsUsed + (level - current)
+                        };
+                        syncTelemetry();
+
+                        return level;
+                      });
+                    }}
+                    revealedHintLevel={revealedHintLevel}
+                    stepHints={visibleHints}
+                    attemptStatus={activeAttemptStatus}
+                    rewriteGate={activeRewriteGate}
+                    taskProgress={activeTaskProgress}
+                    taskRunState={taskRunState}
+                    taskResult={activeTaskResult}
+                    taskSession={taskSession}
+                    taskError={taskError}
+                    taskTelemetry={taskTelemetry}
+                  />
+                </aside>
+              ) : null}
+            </div>
           </section>
-        </section>
         </div>
       )}
 
@@ -1660,6 +1664,7 @@ function ProjectsHome({
       : null;
   const inProgressProjects = projects.filter((project) => project.status === "in-progress");
   const recentProjects = projects.slice(0, 6);
+  const completedProjects = projects.filter((project) => project.status === "completed").length;
 
   return (
     <section className="construct-home">
@@ -1696,151 +1701,199 @@ function ProjectsHome({
         <div className="construct-home-error">{projectsError}</div>
       ) : null}
 
-      {activeProject ? (
-        <section className="construct-home-hero">
-          <div className="construct-home-hero-copy">
-            <span className="construct-home-section-kicker">Continue</span>
-            <h2>{activeProject.name}</h2>
-            <p>{activeProject.description}</p>
-            <div className="construct-home-meta-row">
-              <span>{activeProject.language}</span>
-              <span>
-                Step{" "}
-                {activeProject.currentStepIndex !== null
-                  ? activeProject.currentStepIndex + 1
-                  : 1}
-                /{Math.max(activeProject.totalSteps, 1)}
-              </span>
-              <span>{activeProject.completedStepsCount} completed</span>
-              <span>
-                {formatProjectTimestamp(activeProject.lastOpenedAt ?? activeProject.updatedAt)}
-              </span>
+      <div className="construct-home-shell">
+        <aside className="construct-home-column construct-home-column--sidebar">
+          <section className="construct-home-section">
+            <div className="construct-home-panel-header">
+              <div>
+                <span className="construct-home-section-kicker">In progress</span>
+                <h2>Continue</h2>
+              </div>
             </div>
-          </div>
 
-          <div className="construct-home-hero-actions">
-            <div className="construct-home-hero-stat">
-              <span className="construct-home-section-kicker">Current step</span>
-              <strong>{activeProject.currentStepTitle ?? "Ready to begin"}</strong>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                onOpenProject(activeProject);
-              }}
-              className="construct-primary-button"
-              disabled={dashboardBusy}
-            >
-              {dashboardBusy ? "Opening..." : "Resume project"}
-            </button>
-          </div>
-        </section>
-      ) : (
-        <section className="construct-home-hero construct-home-hero--empty">
-          <div className="construct-home-hero-copy">
-            <span className="construct-home-section-kicker">Start</span>
-            <h2>Create a new project path with the Architect.</h2>
-            <p>
-              Tell Construct what you want to build. It will tailor the project, lessons,
-              checks, and implementation path around your goal and pace.
-            </p>
-          </div>
-          <div className="construct-home-hero-actions">
-            <button
-              type="button"
-              onClick={onStartProject}
-              className="construct-primary-button"
-              disabled={dashboardBusy}
-            >
-              New project
-            </button>
-          </div>
-        </section>
-      )}
-
-      <div className="construct-home-grid">
-        <section className="construct-home-panel">
-          <div className="construct-home-panel-header">
-            <div>
-              <span className="construct-home-section-kicker">In progress</span>
-              <h2>Pick up where you left off</h2>
-            </div>
-          </div>
-
-          {inProgressProjects.length > 0 ? (
-            <div className="construct-project-list">
-              {inProgressProjects.map((project) => (
-                <button
-                  type="button"
-                  key={project.id}
-                  onClick={() => {
-                    onOpenProject(project);
-                  }}
-                  className="construct-project-card"
-                  disabled={dashboardBusy}
-                >
-                  <div className="construct-project-card-header">
-                    <strong>{project.name}</strong>
-                    <span>{project.language}</span>
-                  </div>
-                  <p>{project.description}</p>
-                  <div className="construct-project-card-footer">
-                    <span>
-                      Step{" "}
-                      {project.currentStepIndex !== null
-                        ? project.currentStepIndex + 1
-                        : 1}
-                      /{Math.max(project.totalSteps, 1)}
-                    </span>
-                    <span>{project.currentStepTitle ?? "Ready to begin"}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          ) : (
-            <div className="construct-home-empty">
-              No in-progress projects yet. Start the first one and it will show up here.
-            </div>
-          )}
-        </section>
-
-        <section className="construct-home-panel">
-          <div className="construct-home-panel-header">
-            <div>
-              <span className="construct-home-section-kicker">Recent</span>
-              <h2>All recent projects</h2>
-            </div>
-          </div>
-
-          {recentProjects.length > 0 ? (
-            <div className="construct-recent-list">
-              {recentProjects.map((project) => (
-                <button
-                  type="button"
-                  key={project.id}
-                  onClick={() => {
-                    onOpenProject(project);
-                  }}
-                  className="construct-recent-row"
-                  disabled={dashboardBusy}
-                >
-                  <div>
-                    <strong>{project.name}</strong>
+            {inProgressProjects.length > 0 ? (
+              <div className="construct-project-list">
+                {inProgressProjects.map((project) => (
+                  <button
+                    type="button"
+                    key={project.id}
+                    onClick={() => {
+                      onOpenProject(project);
+                    }}
+                    className="construct-project-card"
+                    disabled={dashboardBusy}
+                  >
+                    <div className="construct-project-card-header">
+                      <strong>{project.name}</strong>
+                      <span>{project.language}</span>
+                    </div>
                     <p>{project.currentStepTitle ?? project.description}</p>
-                  </div>
-                  <div className="construct-recent-row-meta">
-                    <span>{project.status}</span>
-                    <span>{formatProjectTimestamp(project.lastOpenedAt ?? project.updatedAt)}</span>
-                  </div>
+                    <div className="construct-project-card-footer">
+                      <span>
+                        Step{" "}
+                        {project.currentStepIndex !== null
+                          ? project.currentStepIndex + 1
+                          : 1}
+                        /{Math.max(project.totalSteps, 1)}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="construct-home-empty">
+                No active projects yet. The first generated project will appear here.
+              </div>
+            )}
+          </section>
+
+          <section className="construct-home-section">
+            <div className="construct-home-panel-header">
+              <div>
+                <span className="construct-home-section-kicker">Recent</span>
+                <h2>Project history</h2>
+              </div>
+            </div>
+
+            {recentProjects.length > 0 ? (
+              <div className="construct-recent-list">
+                {recentProjects.map((project) => (
+                  <button
+                    type="button"
+                    key={project.id}
+                    onClick={() => {
+                      onOpenProject(project);
+                    }}
+                    className="construct-recent-row"
+                    disabled={dashboardBusy}
+                  >
+                    <div>
+                      <strong>{project.name}</strong>
+                      <p>{project.currentStepTitle ?? project.description}</p>
+                    </div>
+                    <div className="construct-recent-row-meta">
+                      <span>{project.status}</span>
+                      <span>{formatProjectTimestamp(project.lastOpenedAt ?? project.updatedAt)}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="construct-home-empty">
+                No projects yet. Start one and it will be persisted here.
+              </div>
+            )}
+          </section>
+        </aside>
+
+        <section className="construct-home-column construct-home-column--main">
+          {activeProject ? (
+            <section className="construct-home-hero">
+              <div className="construct-home-hero-copy">
+                <span className="construct-home-section-kicker">Active project</span>
+                <h2>{activeProject.name}</h2>
+                <p>{activeProject.description}</p>
+                <div className="construct-home-meta-row">
+                  <span>{activeProject.language}</span>
+                  <span>
+                    Step{" "}
+                    {activeProject.currentStepIndex !== null
+                      ? activeProject.currentStepIndex + 1
+                      : 1}
+                    /{Math.max(activeProject.totalSteps, 1)}
+                  </span>
+                  <span>{activeProject.completedStepsCount} completed</span>
+                  <span>
+                    {formatProjectTimestamp(activeProject.lastOpenedAt ?? activeProject.updatedAt)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="construct-home-hero-actions">
+                <div className="construct-home-hero-stat">
+                  <span className="construct-home-section-kicker">Current step</span>
+                  <strong>{activeProject.currentStepTitle ?? "Ready to begin"}</strong>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenProject(activeProject);
+                  }}
+                  className="construct-primary-button"
+                  disabled={dashboardBusy}
+                >
+                  {dashboardBusy ? "Opening..." : "Resume project"}
                 </button>
-              ))}
-            </div>
+              </div>
+            </section>
           ) : (
-            <div className="construct-home-empty">
-              No projects created yet. Use the new project action to generate the first one.
-            </div>
+            <section className="construct-home-hero construct-home-hero--empty">
+              <div className="construct-home-hero-copy">
+                <span className="construct-home-section-kicker">Start</span>
+                <h2>Create a new guided project.</h2>
+                <p>
+                  Tell Construct what you want to build. The Architect will generate the
+                  project, lessons, checks, hidden tests, and implementation path around
+                  that goal.
+                </p>
+              </div>
+              <div className="construct-home-hero-actions">
+                <button
+                  type="button"
+                  onClick={onStartProject}
+                  className="construct-primary-button"
+                  disabled={dashboardBusy}
+                >
+                  New project
+                </button>
+              </div>
+            </section>
           )}
         </section>
+
+        <aside className="construct-home-column construct-home-column--rail">
+          <section className="construct-home-section">
+            <div className="construct-home-panel-header">
+              <div>
+                <span className="construct-home-section-kicker">Workspace</span>
+                <h2>System state</h2>
+              </div>
+            </div>
+            <div className="construct-home-stats">
+              <div className="construct-home-stat-row">
+                <span>Runner</span>
+                <strong>{runnerHealth?.status ?? "offline"}</strong>
+              </div>
+              <div className="construct-home-stat-row">
+                <span>Projects</span>
+                <strong>{projects.length}</strong>
+              </div>
+              <div className="construct-home-stat-row">
+                <span>In progress</span>
+                <strong>{inProgressProjects.length}</strong>
+              </div>
+              <div className="construct-home-stat-row">
+                <span>Completed</span>
+                <strong>{completedProjects}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="construct-home-section">
+            <div className="construct-home-panel-header">
+              <div>
+                <span className="construct-home-section-kicker">How it works</span>
+                <h2>Project flow</h2>
+              </div>
+            </div>
+            <div className="construct-home-flow">
+              <p>1. Start a project with the Architect.</p>
+              <p>2. Tailor the teaching path and codebase.</p>
+              <p>3. Learn through lessons, checks, and real implementation work.</p>
+              <p>4. Jump back into any project from the stored current step.</p>
+            </div>
+          </section>
+        </aside>
       </div>
     </section>
   );
@@ -2494,6 +2547,41 @@ function BriefOverlay({
     goToExercise();
   };
 
+  const courseOutline = (
+    <aside className="construct-course-outline construct-course-outline--persistent">
+      <div className="construct-course-outline-header">
+        <span className="construct-panel-kicker">Learning path</span>
+        <p className="construct-course-outline-copy">
+          Construct keeps the project on track here, then deepens or adjusts the path when
+          the learner struggles on checks or implementation.
+        </p>
+      </div>
+
+      <div className="construct-step-list">
+        {courseSteps.map((step, index) => {
+          const isActive = step.id === activeStep.id;
+
+          return (
+            <button
+              key={step.id}
+              type="button"
+              onClick={() => {
+                onSelectStep(step);
+              }}
+              className={`construct-step-list-item ${isActive ? "is-active" : ""}`}
+            >
+              <span className="construct-step-list-index">{index + 1}</span>
+              <div>
+                <strong>{step.title}</strong>
+                <span>{step.estimatedMinutes} min</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </aside>
+  );
+
   return (
     <motion.div
       ref={overlayScrollRef}
@@ -2532,7 +2620,9 @@ function BriefOverlay({
           </header>
 
           {phase === "cover" ? (
-            <section className="construct-course-cover">
+            <section className="construct-course-cover construct-course-stage-shell">
+              {courseOutline}
+
               <div className="construct-course-cover-main construct-course-cover-main--hero">
                 <div className="construct-course-cover-copy">
                   <span className="construct-brief-kicker">Course cover</span>
@@ -2579,254 +2669,235 @@ function BriefOverlay({
                   </p>
                 </div>
               </div>
-
-              <aside className="construct-course-outline">
-                <div className="construct-course-outline-header">
-                  <span className="construct-panel-kicker">Learning path</span>
-                  <p className="construct-course-outline-copy">
-                    The Architect prebuilds an initial path, then adjusts it later if you
-                    struggle on checks or code.
-                  </p>
-                </div>
-
-                <div className="construct-step-list">
-                  {courseSteps.map((step, index) => {
-                    const isActive = step.id === activeStep.id;
-
-                    return (
-                      <button
-                        key={step.id}
-                        type="button"
-                        onClick={() => {
-                          onSelectStep(step);
-                        }}
-                        className={`construct-step-list-item ${isActive ? "is-active" : ""}`}
-                      >
-                        <span className="construct-step-list-index">{index + 1}</span>
-                        <div>
-                          <strong>{step.title}</strong>
-                          <span>{step.estimatedMinutes} min</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </aside>
             </section>
           ) : null}
 
           {phase === "lesson" ? (
-            <section className="construct-course-stage">
-              <header className="construct-course-stage-meta">
-                <div className="construct-course-stage-meta-copy">
-                  <span className="construct-brief-kicker">Lesson</span>
-                  <strong>{activeStep.title}</strong>
-                </div>
-                <div className="construct-brief-header-meta">
-                  <span className="construct-brief-chip">
-                    Slide {activeSlideIndex + 1} / {lessonSlides.length}
-                  </span>
-                  <span className="construct-brief-chip">
-                    {checksCompleted}/{activeStep.checks.length} checks complete
-                  </span>
-                  <span className="construct-brief-chip">
-                    {checksAnswered}/{activeStep.checks.length} attempted
-                  </span>
-                </div>
-              </header>
+            <section className="construct-course-stage-shell">
+              {courseOutline}
 
-              <article className="construct-course-slide-stage">
-                <div className="construct-course-slide-surface">
-                  <MarkdownSlide markdown={lessonSlides[activeSlideIndex] ?? ""} />
-                </div>
-              </article>
+              <section className="construct-course-stage">
+                <header className="construct-course-stage-meta">
+                  <div className="construct-course-stage-meta-copy">
+                    <span className="construct-brief-kicker">Lesson</span>
+                    <strong>{activeStep.title}</strong>
+                  </div>
+                  <div className="construct-brief-header-meta">
+                    <span className="construct-brief-chip">
+                      Slide {activeSlideIndex + 1} / {lessonSlides.length}
+                    </span>
+                    <span className="construct-brief-chip">
+                      {checksCompleted}/{activeStep.checks.length} checks complete
+                    </span>
+                    <span className="construct-brief-chip">
+                      {checksAnswered}/{activeStep.checks.length} attempted
+                    </span>
+                  </div>
+                </header>
 
-              <footer className="construct-course-stage-footer">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (activeSlideIndex === 0) {
-                      setPhase("cover");
-                      return;
-                    }
+                <article className="construct-course-slide-stage">
+                  <div className="construct-course-slide-surface">
+                    <MarkdownSlide markdown={lessonSlides[activeSlideIndex] ?? ""} />
+                  </div>
+                </article>
 
-                    setActiveSlideIndex((current) => Math.max(0, current - 1));
-                  }}
-                  className="construct-secondary-button"
-                >
-                  {activeSlideIndex === 0 ? "Back to cover" : "Previous slide"}
-                </button>
-                <button
-                  type="button"
-                  onClick={advanceSlides}
-                  className="construct-primary-button"
-                >
-                  {activeSlideIndex >= lessonSlides.length - 1
-                    ? activeStep.checks.length > 0
-                      ? "Go to checks"
-                      : "Go to exercise"
-                    : "Next slide"}
-                </button>
-              </footer>
+                <footer className="construct-course-stage-footer">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (activeSlideIndex === 0) {
+                        setPhase("cover");
+                        return;
+                      }
+
+                      setActiveSlideIndex((current) => Math.max(0, current - 1));
+                    }}
+                    className="construct-secondary-button"
+                  >
+                    {activeSlideIndex === 0 ? "Back to cover" : "Previous slide"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={advanceSlides}
+                    className="construct-primary-button"
+                  >
+                    {activeSlideIndex >= lessonSlides.length - 1
+                      ? activeStep.checks.length > 0
+                        ? "Go to checks"
+                        : "Go to exercise"
+                      : "Next slide"}
+                  </button>
+                </footer>
+              </section>
             </section>
           ) : null}
 
           {phase === "check" ? (
-            <section className="construct-course-stage">
-              <header className="construct-course-stage-meta">
-                <div className="construct-course-stage-meta-copy">
-                  <span className="construct-brief-kicker">Concept check</span>
-                  <strong>{activeStep.title}</strong>
-                </div>
-                <div className="construct-brief-header-meta">
-                  <span className="construct-brief-chip">
-                    Check {activeCheckIndex + 1} / {Math.max(activeStep.checks.length, 1)}
-                  </span>
-                  <span className="construct-brief-chip">
-                    {checksCompleted}/{activeStep.checks.length} complete
-                  </span>
-                </div>
-              </header>
+            <section className="construct-course-stage-shell">
+              {courseOutline}
 
-              <article className="construct-course-check-stage">
-                {activeCheck ? (
-                  <div className="construct-course-check-surface">
-                    <CheckCard
-                      check={activeCheck}
-                      response={checkResponses[activeCheck.id] ?? ""}
-                      review={activeCheckReview}
-                      onResponseChange={onCheckResponseChange}
-                      onReview={onCheckReview}
-                    />
+              <section className="construct-course-stage">
+                <header className="construct-course-stage-meta">
+                  <div className="construct-course-stage-meta-copy">
+                    <span className="construct-brief-kicker">Concept check</span>
+                    <strong>{activeStep.title}</strong>
+                  </div>
+                  <div className="construct-brief-header-meta">
+                    <span className="construct-brief-chip">
+                      Check {activeCheckIndex + 1} / {Math.max(activeStep.checks.length, 1)}
+                    </span>
+                    <span className="construct-brief-chip">
+                      {checksCompleted}/{activeStep.checks.length} complete
+                    </span>
+                  </div>
+                </header>
 
-                    {activeCheckReview?.status === "needs-revision" ? (
-                      <div className="construct-course-check-support">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPhase("lesson");
-                            setActiveSlideIndex(0);
-                          }}
-                          className="construct-secondary-button"
-                        >
-                          Review lesson again
-                        </button>
+                <article className="construct-course-check-stage">
+                  {activeCheck ? (
+                    <div className="construct-course-check-surface">
+                      <CheckCard
+                        check={activeCheck}
+                        response={checkResponses[activeCheck.id] ?? ""}
+                        review={activeCheckReview}
+                        onResponseChange={onCheckResponseChange}
+                        onReview={onCheckReview}
+                      />
 
-                        {activeCheckAttempts >= 2 ? (
+                      {activeCheckReview?.status === "needs-revision" ? (
+                        <div className="construct-course-check-support">
                           <button
                             type="button"
-                            onClick={onRequestDeepDive}
-                            disabled={deepDiveBusy}
+                            onClick={() => {
+                              setPhase("lesson");
+                              setActiveSlideIndex(0);
+                            }}
                             className="construct-secondary-button"
                           >
-                            {deepDiveBusy
-                              ? "Building a deeper lesson..."
-                              : "Need a deeper explanation?"}
+                            Review lesson again
                           </button>
-                        ) : null}
-                      </div>
-                    ) : null}
 
-                    {deepDiveError ? (
-                      <div className="construct-inline-error">{deepDiveError}</div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="construct-empty-panel">
-                    This unit does not require a pre-check.
-                  </div>
-                )}
-              </article>
+                          {activeCheckAttempts >= 2 ? (
+                            <button
+                              type="button"
+                              onClick={onRequestDeepDive}
+                              disabled={deepDiveBusy}
+                              className="construct-secondary-button"
+                            >
+                              {deepDiveBusy
+                                ? "Building a deeper lesson..."
+                                : "Need a deeper explanation?"}
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
 
-              <footer className="construct-course-stage-footer">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPhase("lesson");
-                    setActiveSlideIndex(Math.max(lessonSlides.length - 1, 0));
-                  }}
-                  className="construct-secondary-button"
-                >
-                  Back to lesson
-                </button>
-                <button
-                  type="button"
-                  onClick={advanceChecks}
-                  disabled={Boolean(activeCheck) && activeCheckReview?.status !== "complete"}
-                  className="construct-primary-button"
-                >
-                  {activeCheckIndex >= activeStep.checks.length - 1 ? "Go to exercise" : "Next check"}
-                </button>
-              </footer>
+                      {deepDiveError ? (
+                        <div className="construct-inline-error">{deepDiveError}</div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="construct-empty-panel">
+                      This unit does not require a pre-check.
+                    </div>
+                  )}
+                </article>
+
+                <footer className="construct-course-stage-footer">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPhase("lesson");
+                      setActiveSlideIndex(Math.max(lessonSlides.length - 1, 0));
+                    }}
+                    className="construct-secondary-button"
+                  >
+                    Back to lesson
+                  </button>
+                  <button
+                    type="button"
+                    onClick={advanceChecks}
+                    disabled={Boolean(activeCheck) && activeCheckReview?.status !== "complete"}
+                    className="construct-primary-button"
+                  >
+                    {activeCheckIndex >= activeStep.checks.length - 1
+                      ? "Go to exercise"
+                      : "Next check"}
+                  </button>
+                </footer>
+              </section>
             </section>
           ) : null}
 
           {phase === "exercise" ? (
-            <section className="construct-course-stage">
-              <header className="construct-course-stage-header construct-course-stage-header--compact">
-                <div className="construct-course-stage-header-copy">
-                  <span className="construct-brief-kicker">Implementation handoff</span>
-                  <strong>{activeStep.title}</strong>
-                  <p>
-                    You have the concept. Now Construct will open the exact file and anchor
-                    where this lesson turns into implementation work.
-                  </p>
+            <section className="construct-course-stage-shell">
+              {courseOutline}
+
+              <section className="construct-course-stage">
+                <header className="construct-course-stage-header construct-course-stage-header--compact">
+                  <div className="construct-course-stage-header-copy">
+                    <span className="construct-brief-kicker">Implementation handoff</span>
+                    <strong>{activeStep.title}</strong>
+                    <p>
+                      You have the concept. Now Construct will open the exact file and anchor
+                      where this lesson turns into implementation work.
+                    </p>
+                  </div>
+                  <div className="construct-brief-header-meta">
+                    <span className="construct-brief-chip">
+                      {checksCompleted}/{activeStep.checks.length} checks complete
+                    </span>
+                    <span className="construct-brief-chip">{activeStep.anchor.file}</span>
+                  </div>
+                </header>
+
+                <div className="construct-course-exercise-grid">
+                  <InfoPanel
+                    title="Implementation brief"
+                    body={activeStep.doc}
+                    markdown
+                  />
+                  <InfoPanel
+                    title="Where Construct will take you"
+                    body={[
+                      `## ${activeStep.anchor.file}`,
+                      "",
+                      `Anchor: \`${activeStep.anchor.marker}\``,
+                      "",
+                      "Construct will open the exact file and focus the learner-owned region for this step."
+                    ].join("\n")}
+                    markdown
+                  />
+                  <MetadataList title="Constraints" values={activeStep.constraints} />
+                  <MetadataList title="Hidden validations" values={activeStep.tests} />
                 </div>
-                <div className="construct-brief-header-meta">
-                  <span className="construct-brief-chip">
-                    {checksCompleted}/{activeStep.checks.length} checks complete
-                  </span>
-                  <span className="construct-brief-chip">{activeStep.anchor.file}</span>
-                </div>
-              </header>
 
-              <div className="construct-course-exercise-grid">
-                <InfoPanel
-                  title="Implementation brief"
-                  body={activeStep.doc}
-                  markdown
-                />
-                <InfoPanel
-                  title="Where Construct will take you"
-                  body={[
-                    `## ${activeStep.anchor.file}`,
-                    "",
-                    `Anchor: \`${activeStep.anchor.marker}\``,
-                    "",
-                    "Construct will open the exact file and focus the learner-owned region for this step."
-                  ].join("\n")}
-                  markdown
-                />
-                <MetadataList title="Constraints" values={activeStep.constraints} />
-                <MetadataList title="Hidden validations" values={activeStep.tests} />
-              </div>
+                <footer className="construct-course-stage-footer">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (activeStep.checks.length > 0) {
+                        setPhase("check");
+                        setActiveCheckIndex(Math.max(activeStep.checks.length - 1, 0));
+                        return;
+                      }
 
-              <footer className="construct-course-stage-footer">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (activeStep.checks.length > 0) {
-                      setPhase("check");
-                      setActiveCheckIndex(Math.max(activeStep.checks.length - 1, 0));
-                      return;
-                    }
-
-                    setPhase("lesson");
-                    setActiveSlideIndex(Math.max(lessonSlides.length - 1, 0));
-                  }}
-                  className="construct-secondary-button"
-                >
-                  Back to lesson flow
-                </button>
-                <button
-                  type="button"
-                  onClick={onApply}
-                  disabled={!canApplyStep}
-                  className="construct-primary-button"
-                >
-                  Open workspace and start coding
-                </button>
-              </footer>
+                      setPhase("lesson");
+                      setActiveSlideIndex(Math.max(lessonSlides.length - 1, 0));
+                    }}
+                    className="construct-secondary-button"
+                  >
+                    Back to lesson flow
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onApply}
+                    disabled={!canApplyStep}
+                    className="construct-primary-button"
+                  >
+                    Open workspace and start coding
+                  </button>
+                </footer>
+              </section>
             </section>
           ) : null}
         </div>
@@ -2974,11 +3045,11 @@ function MarkdownSlide({ markdown }: { markdown: string }) {
             className="construct-markdown-code-block"
             customStyle={{
               margin: 0,
-              padding: "20px 22px",
+              padding: "18px 20px",
               background: "transparent",
               borderRadius: 0,
-              fontSize: "15px",
-              lineHeight: "1.7",
+              fontSize: "13.5px",
+              lineHeight: "1.65",
               overflowX: "auto"
             }}
             codeTagProps={{
