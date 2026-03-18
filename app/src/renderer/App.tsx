@@ -1,7 +1,27 @@
 import Editor from "@monaco-editor/react";
 import { AnimatePresence, motion } from "framer-motion";
+import {
+  BookOpenTextIcon,
+  ChevronDownIcon,
+  FolderOpenIcon,
+  FolderTreeIcon,
+  MoonStarIcon,
+  PlusIcon,
+  SearchIcon,
+  SparklesIcon,
+  SunIcon
+} from "lucide-react";
 import type { editor as MonacoEditor } from "monaco-editor";
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type CSSProperties,
+  type ReactNode
+} from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -9,6 +29,84 @@ import {
   oneDark,
   oneLight
 } from "react-syntax-highlighter/dist/esm/styles/prism";
+
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator
+} from "@/components/ui/breadcrumb";
+import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle
+} from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle
+} from "@/components/ui/empty";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel
+} from "@/components/ui/field";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupTextarea,
+  InputGroupText
+} from "@/components/ui/input-group";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider
+} from "@/components/ui/sidebar";
+import { Spinner } from "@/components/ui/spinner";
+import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 import { findAnchorLocation } from "./lib/anchors";
 import {
@@ -101,6 +199,172 @@ function hasPlanningAnswer(answer: PlanningAnswerDraft | undefined): answer is P
   return answer.answerType === "option"
     ? Boolean(answer.optionId)
     : answer.customResponse.trim().length > 0;
+}
+
+function PrimaryButton({
+  className,
+  children,
+  ...props
+}: ComponentProps<typeof Button>) {
+  return (
+    <Button className={cn("construct-primary-button", className)} {...props}>
+      {children}
+    </Button>
+  );
+}
+
+function SecondaryButton({
+  className,
+  children,
+  ...props
+}: ComponentProps<typeof Button>) {
+  return (
+    <Button
+      variant="outline"
+      className={cn("construct-secondary-button", className)}
+      {...props}
+    >
+      {children}
+    </Button>
+  );
+}
+
+function ToolbarPill({
+  className,
+  variant = "secondary",
+  children,
+  ...props
+}: ComponentProps<typeof Badge> & {
+  variant?: "default" | "secondary" | "outline" | "destructive" | "ghost" | "link";
+}) {
+  return (
+    <Badge
+      variant={variant}
+      className={cn("construct-toolbar-pill", className)}
+      {...props}
+    >
+      {children}
+    </Badge>
+  );
+}
+
+function TagChip({
+  className,
+  children,
+  ...props
+}: ComponentProps<typeof Badge>) {
+  return (
+    <Badge variant="outline" className={cn("construct-tag", className)} {...props}>
+      {children}
+    </Badge>
+  );
+}
+
+function InlineError({
+  children,
+  className
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <Alert variant="destructive" className={cn("construct-inline-error", className)}>
+      <AlertDescription>{children}</AlertDescription>
+    </Alert>
+  );
+}
+
+function EmptyPanel({
+  title,
+  description,
+  className
+}: {
+  title: string;
+  description: string;
+  className?: string;
+}) {
+  return (
+    <Empty className={cn("construct-empty-panel", className)}>
+      <EmptyHeader>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
+}
+
+function ThemeDropdown({
+  theme,
+  onThemeChange,
+  className
+}: {
+  theme: ThemeMode;
+  onThemeChange: (theme: ThemeMode) => void;
+  className?: string;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="outline"
+          className={cn("construct-theme-toggle", className)}
+          aria-label="Theme options"
+        >
+          {theme === "light" ? (
+            <MoonStarIcon data-icon="inline-start" />
+          ) : (
+            <SunIcon data-icon="inline-start" />
+          )}
+          {theme === "light" ? "Dark" : "Light"}
+          <ChevronDownIcon data-icon="inline-end" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuLabel>Appearance</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem
+            onClick={() => {
+              onThemeChange("light");
+            }}
+          >
+            <SunIcon data-icon="inline-start" />
+            Light
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() => {
+              onThemeChange("dark");
+            }}
+          >
+            <MoonStarIcon data-icon="inline-start" />
+            Dark
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function DetailPopover({
+  label,
+  description,
+  children
+}: {
+  label: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>{children}</PopoverTrigger>
+      <PopoverContent align="end" className="w-64">
+        <div className="flex flex-col gap-1">
+          <div className="text-sm font-medium">{label}</div>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export default function App() {
@@ -259,6 +523,8 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.constructTheme = theme;
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    document.documentElement.classList.add("theme");
     window.localStorage.setItem("construct.theme", theme);
   }, [theme]);
 
@@ -1022,6 +1288,10 @@ export default function App() {
     setTheme((current) => (current === "light" ? "dark" : "light"));
   };
 
+  const setThemeMode = (nextTheme: ThemeMode) => {
+    setTheme(nextTheme);
+  };
+
   const openFreshPlanningOverlay = () => {
     setPlanningSession(null);
     setPlanningPlan(null);
@@ -1114,7 +1384,7 @@ export default function App() {
               );
             }}
             onStartProject={openFreshPlanningOverlay}
-            onToggleTheme={toggleTheme}
+            onThemeChange={setThemeMode}
             theme={theme}
           />
 
@@ -1148,18 +1418,22 @@ export default function App() {
                     </div>
 
                     <div className="construct-filter-shell">
-                      <input
-                        value={filterQuery}
-                        onChange={(event) => {
-                          setFilterQuery(event.target.value);
-                        }}
-                        placeholder="Filter files..."
-                        className="construct-filter-input"
-                        aria-label="Filter files"
-                      />
+                      <InputGroup className="construct-filter-input">
+                        <InputGroupAddon>
+                          <SearchIcon />
+                        </InputGroupAddon>
+                        <InputGroupInput
+                          value={filterQuery}
+                          onChange={(event) => {
+                            setFilterQuery(event.target.value);
+                          }}
+                          placeholder="Filter files..."
+                          aria-label="Filter files"
+                        />
+                      </InputGroup>
                     </div>
 
-                    <div className="construct-explorer-scroll">
+                    <ScrollArea className="construct-explorer-scroll">
                       {filteredTree.length > 0 ? (
                         <nav className="construct-tree" aria-label="Workspace files">
                           {filteredTree.map((node) => (
@@ -1186,7 +1460,7 @@ export default function App() {
                             : "No files loaded yet."}
                         </div>
                       )}
-                    </div>
+                    </ScrollArea>
                   </aside>
 
                   <section className="construct-stage">
@@ -1208,41 +1482,67 @@ export default function App() {
                           </div>
 
                           <div className="construct-editor-header-actions">
-                            <span className="construct-toolbar-pill">
+                            <ToolbarPill>
                               {runnerHealth?.status ?? "offline"}
-                            </span>
-                            <span className="construct-toolbar-pill">{taskAttemptLabel}</span>
-                            <span className="construct-toolbar-pill">{snapshotLabel}</span>
+                            </ToolbarPill>
+                            <DetailPopover
+                              label="Attempts"
+                              description={`Construct has recorded ${activeTaskProgress?.totalAttempts ?? 0} targeted run${
+                                activeTaskProgress?.totalAttempts === 1 ? "" : "s"
+                              } for this step.`}
+                            >
+                              <ToolbarPill>{taskAttemptLabel}</ToolbarPill>
+                            </DetailPopover>
+                            <DetailPopover
+                              label="Snapshot"
+                              description={
+                                taskSession
+                                  ? `The pre-task snapshot for this step is ${taskSession.preTaskSnapshot.commitId}.`
+                                  : "A pre-task snapshot will appear after the step is focused."
+                              }
+                            >
+                              <ToolbarPill>{snapshotLabel}</ToolbarPill>
+                            </DetailPopover>
                             {activeStep ? (
-                              <button
-                                type="button"
+                              <SecondaryButton
                                 onClick={() => {
                                   setSurfaceMode("brief");
                                   setStatusMessage(`Opened brief for ${activeStep.title}.`);
                                 }}
-                                className="construct-secondary-button"
                               >
                                 Open brief
-                              </button>
+                              </SecondaryButton>
                             ) : null}
                           </div>
                         </header>
 
                         <div className="construct-editor-breadcrumb">
-                          {editorBreadcrumb.map((segment, index) => (
-                            <Fragment key={`${segment}:${index}`}>
-                              {index > 0 ? (
-                                <span className="construct-editor-breadcrumb-separator">/</span>
-                              ) : null}
-                              <span
-                                className={`construct-editor-breadcrumb-segment ${
-                                  index === editorBreadcrumb.length - 1 ? "is-active" : ""
-                                }`}
-                              >
-                                {segment}
-                              </span>
-                            </Fragment>
-                          ))}
+                          <Breadcrumb>
+                            <BreadcrumbList>
+                              {editorBreadcrumb.map((segment, index) => {
+                                const isActive = index === editorBreadcrumb.length - 1;
+
+                                return (
+                                  <Fragment key={`${segment}:${index}`}>
+                                    {index > 0 ? (
+                                      <BreadcrumbSeparator className="construct-editor-breadcrumb-separator" />
+                                    ) : null}
+                                    <BreadcrumbItem>
+                                      {isActive ? (
+                                        <BreadcrumbPage className="construct-editor-breadcrumb-segment is-active">
+                                          {segment}
+                                        </BreadcrumbPage>
+                                      ) : (
+                                        <span className="construct-editor-breadcrumb-segment">
+                                          {segment}
+                                        </span>
+                                      )}
+                                    </BreadcrumbItem>
+                                  </Fragment>
+                                );
+                              })}
+                            </BreadcrumbList>
+                          </Breadcrumb>
                         </div>
 
                         <div className="construct-editor-main">
@@ -1350,9 +1650,11 @@ export default function App() {
                               }}
                             />
                           ) : (
-                            <div className="construct-editor-empty">
-                              <span>MONACO EDITOR</span>
-                            </div>
+                            <EmptyPanel
+                              className="construct-editor-empty"
+                              title="Workspace editor"
+                              description="Open a file from the explorer to focus the learner-owned implementation region."
+                            />
                           )}
                         </div>
 
@@ -1588,8 +1890,9 @@ function FloatingGuideCard({
         transition={{ duration: 0.2, ease: "easeOut" }}
         className="construct-floating-card is-minimized"
       >
-        <button
+        <Button
           type="button"
+          variant="ghost"
           onClick={onExpand}
           className="construct-floating-card-minibar"
           aria-label={`Expand guide for ${activeStep.title}`}
@@ -1599,7 +1902,7 @@ function FloatingGuideCard({
           <span className="construct-floating-card-minibar-meta">
             Step {activeStepIndex + 1}
           </span>
-        </button>
+        </Button>
       </motion.aside>
     );
   }
@@ -1620,14 +1923,14 @@ function FloatingGuideCard({
               Step {activeStepIndex + 1} / {blueprint?.steps.length ?? 0}
             </span>
           </div>
-          <button
+          <SecondaryButton
             type="button"
             onClick={onMinimize}
             className="construct-guide-minimize-button"
             aria-label="Minimize tutor"
           >
             Minimize
-          </button>
+          </SecondaryButton>
         </div>
         <h2 className="construct-floating-card-title">{activeStep.title}</h2>
         <p className="construct-floating-card-summary">{activeStep.summary}</p>
@@ -1670,15 +1973,15 @@ function FloatingGuideCard({
               from memory and resubmit.
             </p>
             <div className="construct-tag-list">
-              <span className="construct-tag">
+              <TagChip>
                 type {rewriteGate.requiredTypedChars}+ chars
-              </span>
-              <span className="construct-tag">
+              </TagChip>
+              <TagChip>
                 keep paste under {rewriteGate.maxPastedChars} chars
-              </span>
-              <span className="construct-tag">
+              </TagChip>
+              <TagChip>
                 paste ratio under {Math.round(rewriteGate.requiredPasteRatio * 100)}%
-              </span>
+              </TagChip>
             </div>
           </section>
         ) : null}
@@ -1688,42 +1991,41 @@ function FloatingGuideCard({
 
         <div className="construct-floating-card-actions">
           <div className="construct-action-cluster">
-            <button
+            <PrimaryButton
               type="button"
               onClick={onSubmitTask}
               disabled={taskRunState === "running"}
-              className="construct-primary-button"
             >
-              {taskRunState === "running" ? "Running tests..." : "Submit"}
-            </button>
-            <button
-              type="button"
-              onClick={onOpenBrief}
-              className="construct-secondary-button"
-            >
+              {taskRunState === "running" ? (
+                <>
+                  <Spinner data-icon="inline-start" />
+                  Running tests...
+                </>
+              ) : (
+                "Submit"
+              )}
+            </PrimaryButton>
+            <SecondaryButton type="button" onClick={onOpenBrief}>
               Open brief
-            </button>
+            </SecondaryButton>
           </div>
 
           <div className="construct-action-cluster is-compact">
-            <button
-              type="button"
-              onClick={onRefocus}
-              className="construct-secondary-button"
-            >
+            <SecondaryButton type="button" onClick={onRefocus}>
               Refocus anchor
-            </button>
-            <button
-              type="button"
-              onClick={onToggleGuide}
-              className="construct-secondary-button"
-            >
+            </SecondaryButton>
+            <SecondaryButton type="button" onClick={onToggleGuide}>
               {runtimeGuideBusy
-                ? "Guide is thinking..."
+                ? (
+                    <>
+                      <Spinner data-icon="inline-start" />
+                      Guide is thinking...
+                    </>
+                  )
                 : guideVisible
                   ? "Hide guide"
                   : "Ask guide"}
-            </button>
+            </SecondaryButton>
           </div>
         </div>
 
@@ -1736,17 +2038,21 @@ function FloatingGuideCard({
                 quiz before you retry the implementation.
               </p>
             </div>
-            <button
+            <SecondaryButton
               type="button"
               onClick={onRequestDeepDive}
               disabled={deepDiveBusy}
-              className="construct-secondary-button"
             >
-              {deepDiveBusy ? "Building deeper walkthrough..." : "Need a deeper walkthrough?"}
-            </button>
-            {deepDiveError ? (
-              <div className="construct-inline-error">{deepDiveError}</div>
-            ) : null}
+              {deepDiveBusy ? (
+                <>
+                  <Spinner data-icon="inline-start" />
+                  Building deeper walkthrough...
+                </>
+              ) : (
+                "Need a deeper walkthrough?"
+              )}
+            </SecondaryButton>
+            {deepDiveError ? <InlineError>{deepDiveError}</InlineError> : null}
           </div>
         ) : null}
 
@@ -1755,16 +2061,17 @@ function FloatingGuideCard({
             <span>Hints</span>
             <div className="construct-hint-actions">
               {[1, 2, 3].map((level) => (
-                <button
+                <Button
                   key={level}
                   type="button"
                   onClick={() => {
                     onRevealHint(level);
                   }}
+                  variant={revealedHintLevel >= level ? "secondary" : "outline"}
                   className="construct-hint-button"
                 >
                   L{level}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -1801,9 +2108,9 @@ function FloatingGuideCard({
                   {runtimeGuide.observations.length > 0 ? (
                     <div className="construct-tag-list">
                       {runtimeGuide.observations.map((observation) => (
-                        <span key={observation} className="construct-tag">
+                        <TagChip key={observation}>
                           {observation}
-                        </span>
+                        </TagChip>
                       ))}
                     </div>
                   ) : null}
@@ -1817,7 +2124,7 @@ function FloatingGuideCard({
               ) : null}
 
               {runtimeGuideError ? (
-                <div className="construct-inline-error">{runtimeGuideError}</div>
+                <InlineError>{runtimeGuideError}</InlineError>
               ) : null}
 
               {guidePrompts.map((prompt) => (
@@ -1898,89 +2205,140 @@ function AppSidebar({
   const recentProjects = (projectsDashboard?.projects ?? []).slice(0, 5);
 
   return (
-    <aside className="construct-app-sidebar">
-      <div className="construct-app-sidebar-top">
-        <div className="construct-app-brand">
-          <span className="construct-app-brand-kicker">Construct</span>
-          <strong>{activeProjectName ?? "Teaching IDE"}</strong>
-        </div>
-
-        <button
-          type="button"
-          onClick={onStartProject}
-          className="construct-app-sidebar-primary"
-          disabled={dashboardBusy}
-        >
-          New project
-        </button>
-      </div>
-
-      <nav className="construct-app-nav" aria-label="App sections">
-        <button
-          type="button"
-          onClick={onOpenProjects}
-          className={`construct-app-nav-item ${currentView === "projects" ? "is-active" : ""}`}
-        >
-          Projects
-        </button>
-        <button
-          type="button"
-          onClick={onOpenLesson}
-          className={`construct-app-nav-item ${currentView === "lesson" ? "is-active" : ""}`}
-          disabled={!activeStep}
-        >
-          Lesson
-        </button>
-        <button
-          type="button"
-          onClick={onOpenCode}
-          className={`construct-app-nav-item ${currentView === "code" ? "is-active" : ""}`}
-          disabled={!activeStep}
-        >
-          Code
-        </button>
-      </nav>
-
-      <section className="construct-app-sidebar-section">
-        <div className="construct-app-sidebar-section-header">
-          <span className="construct-panel-kicker">Recents</span>
-        </div>
-
-        {recentProjects.length > 0 ? (
-          <div className="construct-app-recent-list">
-            {recentProjects.map((project) => (
-              <button
-                key={project.id}
-                type="button"
-                onClick={() => {
-                  onOpenProject(project);
-                }}
-                className={`construct-app-recent-item ${
-                  projectsDashboard?.activeProjectId === project.id ? "is-active" : ""
-                }`}
-                disabled={dashboardBusy}
-              >
-                <strong>{project.name}</strong>
-                <span>{project.currentStepTitle ?? project.description}</span>
-              </button>
-            ))}
+    <SidebarProvider className="construct-app-sidebar-provider">
+      <Sidebar collapsible="none" className="construct-app-sidebar">
+        <SidebarHeader className="construct-app-sidebar-top">
+          <div className="construct-app-brand">
+            <div className="flex items-center gap-3">
+              <Avatar className="size-10 rounded-xl border border-border/80 bg-background/70">
+                <AvatarFallback className="rounded-xl bg-transparent text-sm font-semibold">
+                  CT
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex min-w-0 flex-col gap-1">
+                <span className="construct-app-brand-kicker">Construct</span>
+                <strong>{activeProjectName ?? "Teaching IDE"}</strong>
+              </div>
+            </div>
           </div>
-        ) : (
-          <p className="construct-app-sidebar-empty">No projects yet.</p>
-        )}
-      </section>
 
-      <section className="construct-app-sidebar-section construct-app-sidebar-section--meta">
-        <div className="construct-app-meta-row">
-          <span>Runner</span>
-          <strong>{runnerHealth?.status ?? "offline"}</strong>
-        </div>
-        <div className="construct-app-meta-row">
-          <span>Projects</span>
-          <strong>{projectsDashboard?.projects.length ?? 0}</strong>
-        </div>
-      </section>
-    </aside>
+          <PrimaryButton
+            type="button"
+            onClick={onStartProject}
+            className="construct-app-sidebar-primary"
+            disabled={dashboardBusy}
+          >
+            <PlusIcon data-icon="inline-start" />
+            New project
+          </PrimaryButton>
+        </SidebarHeader>
+
+        <SidebarContent>
+          <SidebarGroup className="construct-app-sidebar-section">
+            <SidebarGroupLabel className="construct-panel-kicker">
+              Workspace
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu className="construct-app-nav">
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    type="button"
+                    onClick={onOpenProjects}
+                    isActive={currentView === "projects"}
+                    className="construct-app-nav-item"
+                    tooltip="Projects"
+                  >
+                    <FolderTreeIcon />
+                    <span>Projects</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    type="button"
+                    onClick={onOpenLesson}
+                    isActive={currentView === "lesson"}
+                    className="construct-app-nav-item"
+                    tooltip="Lesson"
+                    disabled={!activeStep}
+                  >
+                    <BookOpenTextIcon />
+                    <span>Lesson</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    type="button"
+                    onClick={onOpenCode}
+                    isActive={currentView === "code"}
+                    className="construct-app-nav-item"
+                    tooltip="Code"
+                    disabled={!activeStep}
+                  >
+                    <FolderOpenIcon />
+                    <span>Code</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarGroup className="construct-app-sidebar-section">
+            <div className="construct-app-sidebar-section-header">
+              <SidebarGroupLabel className="construct-panel-kicker">
+                Recents
+              </SidebarGroupLabel>
+              <ToolbarPill>{recentProjects.length}</ToolbarPill>
+            </div>
+
+            <SidebarGroupContent>
+              {recentProjects.length > 0 ? (
+                <ScrollArea className="max-h-[40vh]">
+                  <div className="construct-app-recent-list">
+                    {recentProjects.map((project) => (
+                      <Button
+                        key={project.id}
+                        type="button"
+                        variant="ghost"
+                        onClick={() => {
+                          onOpenProject(project);
+                        }}
+                        className={cn(
+                          "construct-app-recent-item",
+                          projectsDashboard?.activeProjectId === project.id ? "is-active" : ""
+                        )}
+                        disabled={dashboardBusy}
+                      >
+                        <strong>{project.name}</strong>
+                        <span>{project.currentStepTitle ?? project.description}</span>
+                      </Button>
+                    ))}
+                  </div>
+                </ScrollArea>
+              ) : (
+                <Empty className="construct-app-sidebar-empty border-none bg-transparent p-0 text-left">
+                  <EmptyContent className="items-start">
+                    <EmptyDescription>No projects yet.</EmptyDescription>
+                  </EmptyContent>
+                </Empty>
+              )}
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+
+        <SidebarFooter className="construct-app-sidebar-section construct-app-sidebar-section--meta">
+          <div className="construct-app-meta-row">
+            <span>Runner</span>
+            <ToolbarPill variant="outline">{runnerHealth?.status ?? "offline"}</ToolbarPill>
+          </div>
+          <div className="construct-app-meta-row">
+            <span>Projects</span>
+            <ToolbarPill variant="outline">
+              {projectsDashboard?.projects.length ?? 0}
+            </ToolbarPill>
+          </div>
+        </SidebarFooter>
+      </Sidebar>
+    </SidebarProvider>
   );
 }
 
@@ -1995,7 +2353,7 @@ function WorkbenchTopbar({
   onOpenLesson,
   onOpenCode,
   onStartProject,
-  onToggleTheme,
+  onThemeChange,
   theme
 }: {
   currentView: "projects" | "lesson" | "code";
@@ -2008,7 +2366,7 @@ function WorkbenchTopbar({
   onOpenLesson: () => void;
   onOpenCode: () => void;
   onStartProject: () => void;
-  onToggleTheme: () => void;
+  onThemeChange: (theme: ThemeMode) => void;
   theme: ThemeMode;
 }) {
   return (
@@ -2025,44 +2383,50 @@ function WorkbenchTopbar({
       </div>
 
       <div className="construct-workbench-mode-switch" role="tablist" aria-label="Current view">
-        <button
-          type="button"
-          onClick={onOpenProjects}
-          className={`construct-workbench-mode-button ${
-            currentView === "projects" ? "is-active" : ""
-          }`}
-        >
-          Projects
-        </button>
-        <button
-          type="button"
-          onClick={onOpenLesson}
-          className={`construct-workbench-mode-button ${
-            currentView === "lesson" ? "is-active" : ""
-          }`}
-        >
-          Learn
-        </button>
-        <button
-          type="button"
-          onClick={onOpenCode}
-          className={`construct-workbench-mode-button ${
-            currentView === "code" ? "is-active" : ""
-          }`}
-        >
-          Code
-        </button>
+        <ButtonGroup className="construct-workbench-mode-switch">
+          <Button
+            type="button"
+            variant={currentView === "projects" ? "secondary" : "ghost"}
+            className={cn(
+              "construct-workbench-mode-button",
+              currentView === "projects" ? "is-active" : ""
+            )}
+            onClick={onOpenProjects}
+          >
+            Projects
+          </Button>
+          <Button
+            type="button"
+            variant={currentView === "lesson" ? "secondary" : "ghost"}
+            className={cn(
+              "construct-workbench-mode-button",
+              currentView === "lesson" ? "is-active" : ""
+            )}
+            onClick={onOpenLesson}
+          >
+            Learn
+          </Button>
+          <Button
+            type="button"
+            variant={currentView === "code" ? "secondary" : "ghost"}
+            className={cn(
+              "construct-workbench-mode-button",
+              currentView === "code" ? "is-active" : ""
+            )}
+            onClick={onOpenCode}
+          >
+            Code
+          </Button>
+        </ButtonGroup>
       </div>
 
       <div className="construct-workbench-topbar-actions">
-        <span className="construct-toolbar-pill">{runnerHealth?.status ?? "offline"}</span>
-        <span className="construct-toolbar-pill">{saveStateLabel}</span>
-        <button type="button" onClick={onStartProject} className="construct-secondary-button">
+        <ToolbarPill>{runnerHealth?.status ?? "offline"}</ToolbarPill>
+        <ToolbarPill variant="outline">{saveStateLabel}</ToolbarPill>
+        <SecondaryButton type="button" onClick={onStartProject}>
           New
-        </button>
-        <button type="button" onClick={onToggleTheme} className="construct-theme-toggle">
-          {theme === "light" ? "Dark" : "Light"}
-        </button>
+        </SecondaryButton>
+        <ThemeDropdown theme={theme} onThemeChange={onThemeChange} />
       </div>
     </header>
   );
@@ -2182,9 +2546,7 @@ function ProjectsHome({
         </div>
       </header>
 
-      {projectsError ? (
-        <div className="construct-home-error">{projectsError}</div>
-      ) : null}
+      {projectsError ? <InlineError className="construct-home-error">{projectsError}</InlineError> : null}
 
       <div className="construct-home-dashboard">
         <section className="construct-home-surface construct-home-surface--project">
@@ -2195,7 +2557,7 @@ function ProjectsHome({
                   <span className="construct-home-section-kicker">Creation in progress</span>
                   <h2>{planningSession?.goal ?? "Resume unfinished project creation"}</h2>
                 </div>
-                <span className="construct-toolbar-pill">{resumeProgressLabel}</span>
+                <ToolbarPill>{resumeProgressLabel}</ToolbarPill>
               </div>
 
               <p className="construct-home-surface-copy">
@@ -2209,21 +2571,16 @@ function ProjectsHome({
               </div>
 
               <div className="construct-home-surface-actions">
-                <button
+                <PrimaryButton
                   type="button"
                   onClick={onResumeCreation}
-                  className="construct-primary-button"
                   disabled={dashboardBusy}
                 >
                   Resume creation
-                </button>
-                <button
-                  type="button"
-                  onClick={onStartProject}
-                  className="construct-secondary-button"
-                >
+                </PrimaryButton>
+                <SecondaryButton type="button" onClick={onStartProject}>
                   Start fresh
-                </button>
+                </SecondaryButton>
               </div>
             </>
           ) : activeProject ? (
@@ -2234,12 +2591,12 @@ function ProjectsHome({
                   <span className="construct-home-section-kicker">Active project</span>
                   <h2>{activeProject.name}</h2>
                 </div>
-                <span className="construct-toolbar-pill">
+                <ToolbarPill>
                   {activeProject.currentStepIndex !== null
                     ? activeProject.currentStepIndex + 1
                     : 1}
                   /{Math.max(activeProject.totalSteps, 1)}
-                </span>
+                </ToolbarPill>
               </div>
 
               <p className="construct-home-surface-copy">{activeProject.description}</p>
@@ -2271,16 +2628,15 @@ function ProjectsHome({
               </div>
 
               <div className="construct-home-surface-actions">
-                <button
+                <PrimaryButton
                   type="button"
                   onClick={() => {
                     onOpenProject(activeProject);
                   }}
-                  className="construct-primary-button"
                   disabled={dashboardBusy}
                 >
                   {dashboardBusy ? "Opening..." : "Resume project"}
-                </button>
+                </PrimaryButton>
               </div>
             </>
           ) : (
@@ -2301,14 +2657,13 @@ function ProjectsHome({
                 the learner knowledge base will start filling in beside it.
               </div>
               <div className="construct-home-surface-actions">
-                <button
+                <PrimaryButton
                   type="button"
                   onClick={onStartProject}
-                  className="construct-primary-button"
                   disabled={dashboardBusy}
                 >
                   New project
-                </button>
+                </PrimaryButton>
               </div>
             </>
           )}
@@ -2320,7 +2675,7 @@ function ProjectsHome({
               <span className="construct-home-section-kicker">Learner profile</span>
               <h2>Knowledge graph</h2>
             </div>
-            <span className="construct-toolbar-pill">{knowledgeConcepts.length}</span>
+            <ToolbarPill>{knowledgeConcepts.length}</ToolbarPill>
           </div>
 
           <p className="construct-home-surface-copy">
@@ -2600,20 +2955,24 @@ function PlanningOverlay({
   }, [planningSession, planningPlan, planningAnswers]);
 
   return (
-    <motion.div
-      className="construct-planning-overlay"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
     >
-      <motion.section
-        className="construct-planning-panel"
-        initial={{ opacity: 0, y: 16, scale: 0.985 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 12, scale: 0.985 }}
-        transition={{ duration: 0.22, ease: "easeOut" }}
+      <DialogContent
+        showCloseButton={false}
+        className="construct-planning-panel max-w-none gap-0 border-0 bg-transparent p-0 shadow-none ring-0 sm:max-w-[calc(100vw-24px)]"
       >
+        <DialogHeader className="sr-only">
+          <DialogTitle>Create a new project</DialogTitle>
+          <DialogDescription>
+            Work with the Architect to tailor and generate a guided project workspace.
+          </DialogDescription>
+        </DialogHeader>
         <header className="construct-planning-header">
           <div className="construct-planning-header-copy">
             <span className="construct-brief-kicker">Architect</span>
@@ -2624,14 +2983,14 @@ function PlanningOverlay({
             </p>
           </div>
           <div className="construct-planning-header-actions">
-            <span className="construct-toolbar-pill">
+            <ToolbarPill>
               {planningSession
                 ? `${answeredQuestionCount}/${planningSession.questions.length} tailored`
                 : "new project"}
-            </span>
-            <button type="button" onClick={onClose} className="construct-secondary-button">
+            </ToolbarPill>
+            <SecondaryButton type="button" onClick={onClose}>
               Close
-            </button>
+            </SecondaryButton>
           </div>
         </header>
 
@@ -2645,14 +3004,31 @@ function PlanningOverlay({
                 lessons, checks, implementation order, and hidden validation around this
                 goal.
               </p>
-              <textarea
-                value={planningGoal}
-                onChange={(event) => {
-                  onGoalChange(event.target.value);
-                }}
-                className="construct-check-textarea construct-planning-textarea"
-                placeholder="Build a TypeScript dependency graph visualizer from scratch and teach me enough parsing and graph basics to implement it myself."
-              />
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="planning-goal">Project brief</FieldLabel>
+                  <FieldDescription>
+                    Capture the app, domain, and the concepts you want Construct to teach
+                    through the implementation itself.
+                  </FieldDescription>
+                  <InputGroup className="construct-check-textarea construct-planning-textarea">
+                    <InputGroupAddon align="block-start">
+                      <InputGroupText>
+                        <SparklesIcon />
+                        Architect prompt
+                      </InputGroupText>
+                    </InputGroupAddon>
+                    <InputGroupTextarea
+                      id="planning-goal"
+                      value={planningGoal}
+                      onChange={(event) => {
+                        onGoalChange(event.target.value);
+                      }}
+                      placeholder="Build a TypeScript dependency graph visualizer from scratch and teach me enough parsing and graph basics to implement it myself."
+                    />
+                  </InputGroup>
+                </Field>
+              </FieldGroup>
               <div className="construct-planning-style-row">
                 <div className="construct-planning-style-copy">
                   <span className="construct-panel-kicker">Learning style</span>
@@ -2661,7 +3037,7 @@ function PlanningOverlay({
                     writing code in the real project.
                   </p>
                 </div>
-                <div className="construct-segmented-list construct-segmented-list--inline">
+                <ButtonGroup className="construct-segmented-list construct-segmented-list--inline">
                   {(
                     [
                       ["concept-first", "Concept first"],
@@ -2669,30 +3045,38 @@ function PlanningOverlay({
                       ["example-first", "Example first"]
                     ] satisfies Array<[LearningStyle, string]>
                   ).map(([value, label]) => (
-                    <button
+                    <Button
                       key={value}
                       type="button"
                       onClick={() => {
                         onLearningStyleChange(value);
                       }}
-                      className={`construct-check-option ${
+                      variant={planningLearningStyle === value ? "secondary" : "outline"}
+                      className={cn(
+                        "construct-check-option",
                         planningLearningStyle === value ? "is-selected" : ""
-                      }`}
+                      )}
                     >
                       {label}
-                    </button>
+                    </Button>
                   ))}
-                </div>
+                </ButtonGroup>
               </div>
               <div className="construct-planning-composer-actions">
-                <button
+                <PrimaryButton
                   type="button"
                   onClick={onStartPlanning}
                   disabled={planningBusy || planningGoal.trim().length < 3}
-                  className="construct-primary-button"
                 >
-                  {planningBusy ? "Starting..." : "Start project creation"}
-                </button>
+                  {planningBusy ? (
+                    <>
+                      <Spinner data-icon="inline-start" />
+                      Starting...
+                    </>
+                  ) : (
+                    "Start project creation"
+                  )}
+                </PrimaryButton>
               </div>
             </section>
 
@@ -2700,11 +3084,11 @@ function PlanningOverlay({
               <section className="construct-info-panel">
                 <span className="construct-panel-kicker">What the Architect will produce</span>
                 <div className="construct-tag-list">
-                  <span className="construct-tag">project path</span>
-                  <span className="construct-tag">lesson slides</span>
-                  <span className="construct-tag">concept checks</span>
-                  <span className="construct-tag">real code tasks</span>
-                  <span className="construct-tag">hidden tests</span>
+                  <TagChip>project path</TagChip>
+                  <TagChip>lesson slides</TagChip>
+                  <TagChip>concept checks</TagChip>
+                  <TagChip>real code tasks</TagChip>
+                  <TagChip>hidden tests</TagChip>
                 </div>
                 <p>
                   Construct creates the project, writes the course, prepares hidden tests,
@@ -2742,13 +3126,13 @@ function PlanningOverlay({
                 workspace.
               </p>
               <div className="construct-tag-list">
-                <span className="construct-tag">
+                <TagChip>
                   {formatDetectedLabel(planningSession.detectedDomain)}
-                </span>
-                <span className="construct-tag">
+                </TagChip>
+                <TagChip>
                   {formatDetectedLabel(planningSession.detectedLanguage)}
-                </span>
-                <span className="construct-tag">{planningLearningStyle}</span>
+                </TagChip>
+                <TagChip>{planningLearningStyle}</TagChip>
               </div>
               {planningBusy ? (
                 <p className="construct-muted-copy">
@@ -2810,9 +3194,9 @@ function PlanningOverlay({
                     {step.implementationNotes.length > 0 ? (
                       <div className="construct-tag-list">
                         {step.implementationNotes.map((note) => (
-                          <span key={note} className="construct-tag">
+                          <TagChip key={note}>
                             {note}
-                          </span>
+                          </TagChip>
                         ))}
                       </div>
                     ) : null}
@@ -2837,15 +3221,17 @@ function PlanningOverlay({
         ) : null}
 
         {isQuestionPhase && currentQuestion && !planningBusy ? (
-          <div className="construct-planning-question-layer">
-            <div className="construct-planning-question-dim" aria-hidden="true" />
-            <motion.section
-              className="construct-planning-question-modal"
-              initial={{ opacity: 0, y: 18, scale: 0.985 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 12, scale: 0.985 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
+          <Dialog open>
+            <DialogContent
+              showCloseButton={false}
+              className="construct-planning-question-modal w-[min(760px,calc(100vw-32px))] max-w-none gap-0 border-0 bg-transparent p-0 shadow-none ring-0"
             >
+              <DialogHeader className="sr-only">
+                <DialogTitle>Project tailoring question</DialogTitle>
+                <DialogDescription>
+                  Help the Architect personalize the project flow before generation begins.
+                </DialogDescription>
+              </DialogHeader>
               <div className="construct-planning-question-header">
                 <div>
                   <span className="construct-panel-kicker">Project tailoring</span>
@@ -2861,21 +3247,22 @@ function PlanningOverlay({
                   </p>
                 </div>
                 <div className="construct-tag-list">
-                  <span className="construct-tag">
+                  <TagChip>
                     Question {activeQuestionIndex + 1} / {questionCount}
-                  </span>
-                  <span className="construct-tag">{answeredQuestionCount} answered</span>
+                  </TagChip>
+                  <TagChip>{answeredQuestionCount} answered</TagChip>
                 </div>
               </div>
 
               <div className="construct-planning-question-progress">
                 {planningSession.questions.map((question, index) => (
-                  <button
+                  <Button
                     key={question.id}
                     type="button"
                     onClick={() => {
                       setActiveQuestionIndex(index);
                     }}
+                    variant="ghost"
                     className={`construct-question-dot ${
                       index === activeQuestionIndex ? "is-active" : ""
                     } ${hasPlanningAnswer(planningAnswers[question.id]) ? "is-complete" : ""}`}
@@ -2894,22 +3281,29 @@ function PlanningOverlay({
 
                 <div className="construct-check-options">
                   {currentQuestion.options.map((option) => (
-                    <button
+                    <Button
                       key={option.id}
                       type="button"
                       onClick={() => {
                         onOptionAnswerChange(currentQuestion.id, option.id);
                       }}
-                      className={`construct-check-option ${
+                      variant={
                         currentAnswer?.answerType === "option" &&
                         currentAnswer.optionId === option.id
+                          ? "secondary"
+                          : "outline"
+                      }
+                      className={cn(
+                        "construct-check-option",
+                        currentAnswer?.answerType === "option" &&
+                          currentAnswer.optionId === option.id
                           ? "is-selected"
                           : ""
-                      }`}
+                      )}
                     >
                       <strong>{option.label}</strong>
                       <span>{option.description}</span>
-                    </button>
+                    </Button>
                   ))}
 
                   <div
@@ -2925,7 +3319,7 @@ function PlanningOverlay({
                         learner’s real background and preferences.
                       </span>
                     </div>
-                    <textarea
+                    <Textarea
                       value={
                         currentAnswer?.answerType === "custom"
                           ? currentAnswer.customResponse
@@ -2947,19 +3341,18 @@ function PlanningOverlay({
               </section>
 
               <footer className="construct-planning-question-footer">
-                <button
+                <SecondaryButton
                   type="button"
                   onClick={() => {
                     setActiveQuestionIndex((current) => Math.max(0, current - 1));
                   }}
-                  className="construct-secondary-button"
                   disabled={activeQuestionIndex === 0}
                 >
                   Previous
-                </button>
+                </SecondaryButton>
 
                 <div className="construct-planning-question-footer-actions">
-                  <button
+                  <PrimaryButton
                     type="button"
                     onClick={() => {
                       if (activeQuestionIndex < questionCount - 1) {
@@ -2975,10 +3368,14 @@ function PlanningOverlay({
                       (!currentQuestionAnswered && activeQuestionIndex < questionCount - 1) ||
                       (activeQuestionIndex === questionCount - 1 && !canCompletePlanning)
                     }
-                    className="construct-primary-button"
                   >
                     {planningBusy
-                      ? "Generating project..."
+                      ? (
+                          <>
+                            <Spinner data-icon="inline-start" />
+                            Generating project...
+                          </>
+                        )
                       : activeQuestionIndex < questionCount - 1
                         ? "Next question"
                         : canCompletePlanning
@@ -2986,24 +3383,24 @@ function PlanningOverlay({
                           : `Answer ${questionCount - answeredQuestionCount} more question${
                               questionCount - answeredQuestionCount === 1 ? "" : "s"
                             }`}
-                  </button>
+                  </PrimaryButton>
                 </div>
               </footer>
-            </motion.section>
-          </div>
+            </DialogContent>
+          </Dialog>
         ) : null}
 
-        {planningError ? <div className="construct-inline-error">{planningError}</div> : null}
+        {planningError ? <InlineError>{planningError}</InlineError> : null}
 
         <footer className="construct-planning-footer">
           {planningPlan ? (
-            <button type="button" onClick={onClose} className="construct-primary-button">
+            <PrimaryButton type="button" onClick={onClose}>
               Continue to workspace
-            </button>
+            </PrimaryButton>
           ) : null}
         </footer>
-      </motion.section>
-    </motion.div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -3206,9 +3603,10 @@ function BriefOverlay({
           const isActive = step.id === activeStep.id;
 
           return (
-            <button
+            <Button
               key={step.id}
               type="button"
+              variant={isActive ? "secondary" : "ghost"}
               onClick={() => {
                 onSelectStep(step);
               }}
@@ -3219,7 +3617,7 @@ function BriefOverlay({
                 <strong>{step.title}</strong>
                 <span>{step.estimatedMinutes} min</span>
               </div>
-            </button>
+            </Button>
           );
         })}
       </div>
@@ -3249,17 +3647,20 @@ function BriefOverlay({
               <strong>{blueprint?.name ?? "Generated course"}</strong>
             </div>
             <div className="construct-course-topbar-actions">
-              <span className="construct-brief-chip">
+              <ToolbarPill variant="outline" className="construct-brief-chip">
                 Step {activeStepIndex + 1} / {courseSteps.length}
-              </span>
-              <span className="construct-brief-chip">{totalCourseMinutes} min total</span>
-              <button
-                type="button"
-                onClick={onToggleTheme}
-                className="construct-secondary-button"
-              >
-                {theme === "light" ? "Dark mode" : "Light mode"}
-              </button>
+              </ToolbarPill>
+              <ToolbarPill variant="outline" className="construct-brief-chip">
+                {totalCourseMinutes} min total
+              </ToolbarPill>
+              <ThemeDropdown
+                theme={theme}
+                onThemeChange={(nextTheme) => {
+                  if (nextTheme !== theme) {
+                    onToggleTheme();
+                  }
+                }}
+              />
             </div>
           </header>
 
@@ -3297,15 +3698,14 @@ function BriefOverlay({
                 </div>
 
                 <div className="construct-course-cover-actions">
-                  <button
+                  <PrimaryButton
                     type="button"
                     onClick={() => {
                       setPhase("lesson");
                     }}
-                    className="construct-primary-button"
                   >
                     {activeStepIndex === 0 ? "Start course" : "Resume lesson"}
-                  </button>
+                  </PrimaryButton>
                   <p className="construct-muted-copy">
                     You will stay in lesson mode until the concept is explained and the
                     checks are complete. The code editor opens only when the exercise handoff
@@ -3327,15 +3727,15 @@ function BriefOverlay({
                     <strong>{activeStep.title}</strong>
                   </div>
                   <div className="construct-brief-header-meta">
-                    <span className="construct-brief-chip">
+                    <ToolbarPill variant="outline" className="construct-brief-chip">
                       Slide {activeSlideIndex + 1} / {lessonSlides.length}
-                    </span>
-                    <span className="construct-brief-chip">
+                    </ToolbarPill>
+                    <ToolbarPill variant="outline" className="construct-brief-chip">
                       {checksCompleted}/{activeStep.checks.length} checks complete
-                    </span>
-                    <span className="construct-brief-chip">
+                    </ToolbarPill>
+                    <ToolbarPill variant="outline" className="construct-brief-chip">
                       {checksAnswered}/{activeStep.checks.length} attempted
-                    </span>
+                    </ToolbarPill>
                   </div>
                 </header>
 
@@ -3346,7 +3746,7 @@ function BriefOverlay({
                 </article>
 
                 <footer className="construct-course-stage-footer">
-                  <button
+                  <SecondaryButton
                     type="button"
                     onClick={() => {
                       if (activeSlideIndex === 0) {
@@ -3356,21 +3756,16 @@ function BriefOverlay({
 
                       setActiveSlideIndex((current) => Math.max(0, current - 1));
                     }}
-                    className="construct-secondary-button"
                   >
                     {activeSlideIndex === 0 ? "Back to cover" : "Previous slide"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={advanceSlides}
-                    className="construct-primary-button"
-                  >
+                  </SecondaryButton>
+                  <PrimaryButton type="button" onClick={advanceSlides}>
                     {activeSlideIndex >= lessonSlides.length - 1
                       ? activeStep.checks.length > 0
                         ? "Go to checks"
                         : "Go to exercise"
                       : "Next slide"}
-                  </button>
+                  </PrimaryButton>
                 </footer>
               </section>
             </section>
@@ -3387,12 +3782,12 @@ function BriefOverlay({
                     <strong>{activeStep.title}</strong>
                   </div>
                   <div className="construct-brief-header-meta">
-                    <span className="construct-brief-chip">
+                    <ToolbarPill variant="outline" className="construct-brief-chip">
                       Check {activeCheckIndex + 1} / {Math.max(activeStep.checks.length, 1)}
-                    </span>
-                    <span className="construct-brief-chip">
+                    </ToolbarPill>
+                    <ToolbarPill variant="outline" className="construct-brief-chip">
                       {checksCompleted}/{activeStep.checks.length} complete
-                    </span>
+                    </ToolbarPill>
                   </div>
                 </header>
 
@@ -3410,78 +3805,77 @@ function BriefOverlay({
 
                       {activeCheckReview?.status === "needs-revision" ? (
                         <div className="construct-course-check-support">
-                          <button
+                          <SecondaryButton
                             type="button"
                             onClick={() => {
                               setPhase("lesson");
                               setActiveSlideIndex(0);
                             }}
-                            className="construct-secondary-button"
                           >
                             Review lesson again
-                          </button>
+                          </SecondaryButton>
 
                           {activeCheckAttempts >= 2 ? (
                             <>
-                              <button
+                              <SecondaryButton
                                 type="button"
                                 onClick={onRequestDeepDive}
                                 disabled={deepDiveBusy}
-                                className="construct-secondary-button"
                               >
-                                {deepDiveBusy
-                                  ? "Building a deeper lesson..."
-                                  : "Need a deeper explanation?"}
-                              </button>
-                              <button
+                                {deepDiveBusy ? (
+                                  <>
+                                    <Spinner data-icon="inline-start" />
+                                    Building a deeper lesson...
+                                  </>
+                                ) : (
+                                  "Need a deeper explanation?"
+                                )}
+                              </SecondaryButton>
+                              <SecondaryButton
                                 type="button"
                                 onClick={() => {
                                   onSkipCheck(activeCheck);
                                 }}
-                                className="construct-secondary-button"
                               >
                                 Skip for now
-                              </button>
+                              </SecondaryButton>
                             </>
                           ) : null}
                         </div>
                       ) : null}
 
-                      {deepDiveError ? (
-                        <div className="construct-inline-error">{deepDiveError}</div>
-                      ) : null}
+                      {deepDiveError ? <InlineError>{deepDiveError}</InlineError> : null}
                     </div>
                   ) : (
-                    <div className="construct-empty-panel">
-                      This unit does not require a pre-check.
-                    </div>
+                    <EmptyPanel
+                      title="No concept check required"
+                      description="This lesson flows directly into the exercise handoff."
+                    />
                   )}
                 </article>
 
                 <footer className="construct-course-stage-footer">
-                  <button
+                  <SecondaryButton
                     type="button"
                     onClick={() => {
                       setPhase("lesson");
                       setActiveSlideIndex(Math.max(lessonSlides.length - 1, 0));
                     }}
-                    className="construct-secondary-button"
                   >
                     Back to lesson
-                  </button>
-                  <button
+                  </SecondaryButton>
+                  <PrimaryButton
                     type="button"
                     onClick={advanceChecks}
                     disabled={
                       Boolean(activeCheck) &&
                       !["complete", "skipped"].includes(activeCheckReview?.status ?? "")
                     }
-                    className="construct-primary-button"
                   >
                     {activeCheckIndex >= activeStep.checks.length - 1
                       ? "Go to exercise"
                       : "Next check"}
-                  </button>
+                  </PrimaryButton>
                 </footer>
               </section>
             </section>
@@ -3502,10 +3896,12 @@ function BriefOverlay({
                     </p>
                   </div>
                   <div className="construct-brief-header-meta">
-                    <span className="construct-brief-chip">
+                    <ToolbarPill variant="outline" className="construct-brief-chip">
                       {checksCompleted}/{activeStep.checks.length} checks complete
-                    </span>
-                    <span className="construct-brief-chip">{activeStep.anchor.file}</span>
+                    </ToolbarPill>
+                    <ToolbarPill variant="outline" className="construct-brief-chip">
+                      {activeStep.anchor.file}
+                    </ToolbarPill>
                   </div>
                 </header>
 
@@ -3531,7 +3927,7 @@ function BriefOverlay({
                 </div>
 
                 <footer className="construct-course-stage-footer">
-                  <button
+                  <SecondaryButton
                     type="button"
                     onClick={() => {
                       if (activeStep.checks.length > 0) {
@@ -3543,18 +3939,12 @@ function BriefOverlay({
                       setPhase("lesson");
                       setActiveSlideIndex(Math.max(lessonSlides.length - 1, 0));
                     }}
-                    className="construct-secondary-button"
                   >
                     Back to lesson flow
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onApply}
-                    disabled={!canApplyStep}
-                    className="construct-primary-button"
-                  >
+                  </SecondaryButton>
+                  <PrimaryButton type="button" onClick={onApply} disabled={!canApplyStep}>
                     Open workspace and start coding
-                  </button>
+                  </PrimaryButton>
                 </footer>
               </section>
             </section>
@@ -3632,8 +4022,9 @@ function ExplorerTreeNode({
 
   return (
     <div className="construct-tree-node">
-      <button
+      <Button
         type="button"
+        variant="ghost"
         onClick={() => {
           if (isDirectory) {
             onToggleDirectory(node.path);
@@ -3652,7 +4043,7 @@ function ExplorerTreeNode({
           {isDirectory ? <FolderIcon /> : <FileIcon filePath={node.path} />}
         </span>
         <span className="construct-tree-label">{node.name}</span>
-      </button>
+      </Button>
 
       {isDirectory && isExpanded ? (
         <div className="construct-tree-children">
@@ -3729,10 +4120,14 @@ function InfoPanel({
   markdown?: boolean;
 }) {
   return (
-    <section className="construct-info-panel">
-      <span className="construct-panel-kicker">{title}</span>
-      {markdown ? <MarkdownSlide markdown={body} /> : <p>{body}</p>}
-    </section>
+    <Card className="construct-info-panel" size="sm">
+      <CardHeader className="gap-2">
+        <span className="construct-panel-kicker">{title}</span>
+      </CardHeader>
+      <CardContent>
+        {markdown ? <MarkdownSlide markdown={body} /> : <p>{body}</p>}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -3914,25 +4309,29 @@ function MetadataList({ title, values }: { title: string; values: string[] }) {
   }
 
   return (
-    <section className="construct-metadata-panel">
-      <span className="construct-panel-kicker">{title}</span>
-      <div className="construct-tag-list">
-        {values.map((value) => (
-          <span key={value} className="construct-tag">
-            {value}
-          </span>
-        ))}
-      </div>
-    </section>
+    <Card className="construct-metadata-panel" size="sm">
+      <CardHeader className="gap-2">
+        <span className="construct-panel-kicker">{title}</span>
+      </CardHeader>
+      <CardContent>
+        <div className="construct-tag-list">
+          {values.map((value) => (
+            <TagChip key={value}>{value}</TagChip>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
 function MetricPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="construct-session-metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
+    <Card className="construct-session-metric" size="sm">
+      <CardContent className="flex items-center justify-between gap-3 px-3 py-2">
+        <span>{label}</span>
+        <strong>{value}</strong>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -3952,82 +4351,105 @@ function CheckCard({
   onReview: (check: ComprehensionCheck) => void | Promise<void>;
 }) {
   return (
-    <section className="construct-check-card">
-      <div className="construct-check-header">
+    <Card className="construct-check-card">
+      <CardHeader className="construct-check-header">
         <span className="construct-panel-kicker">
           {check.type === "mcq" ? "Multiple choice" : "Short response"}
         </span>
-        <h3>{check.prompt}</h3>
-      </div>
+        <CardTitle>{check.prompt}</CardTitle>
+      </CardHeader>
 
-      {check.type === "mcq" ? (
-        <div className="construct-check-short-answer">
-          <div className="construct-check-options">
-            {check.options.map((option) => {
-              const isSelected = response === option.id;
+      <CardContent className="construct-check-short-answer">
+        {check.type === "mcq" ? (
+          <>
+            <div className="construct-check-options">
+              {check.options.map((option) => {
+                const isSelected = response === option.id;
 
-              return (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => {
-                    onResponseChange(check, option.id);
-                  }}
-                  className={`construct-check-option ${isSelected ? "is-selected" : ""}`}
-                >
-                  <strong>{option.label}</strong>
-                  {option.rationale ? <span>{option.rationale}</span> : null}
-                </button>
-              );
-            })}
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              void onReview(check);
-            }}
-            disabled={!hasAnsweredCheck(check, response) || busy}
-            className="construct-secondary-button"
-          >
-            {busy ? "Reviewing..." : "Check answer"}
-          </button>
-        </div>
-      ) : (
-        <div className="construct-check-short-answer">
-          <textarea
-            value={response}
-            onChange={(event) => {
-              onResponseChange(check, event.target.value);
-            }}
-            placeholder={check.placeholder ?? "Write a concise technical answer."}
-            className="construct-check-textarea"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              void onReview(check);
-            }}
-            disabled={!hasAnsweredCheck(check, response) || busy}
-            className="construct-secondary-button"
-          >
-            {busy ? "Reviewing..." : "Review answer"}
-          </button>
-        </div>
-      )}
-
-      {review ? (
-        <div className={`construct-check-review ${review.status}`}>
-          <p>{review.message}</p>
-          {review.missingCriteria.length > 0 ? (
-            <div className="construct-review-list">
-              {review.missingCriteria.map((criterion) => (
-                <span key={criterion}>{criterion}</span>
-              ))}
+                return (
+                  <Button
+                    key={option.id}
+                    type="button"
+                    variant={isSelected ? "secondary" : "outline"}
+                    onClick={() => {
+                      onResponseChange(check, option.id);
+                    }}
+                    className={cn(
+                      "construct-check-option",
+                      isSelected ? "is-selected" : ""
+                    )}
+                  >
+                    <strong>{option.label}</strong>
+                    {option.rationale ? <span>{option.rationale}</span> : null}
+                  </Button>
+                );
+              })}
             </div>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
+            <SecondaryButton
+              type="button"
+              onClick={() => {
+                void onReview(check);
+              }}
+              disabled={!hasAnsweredCheck(check, response) || busy}
+            >
+              {busy ? (
+                <>
+                  <Spinner data-icon="inline-start" />
+                  Reviewing...
+                </>
+              ) : (
+                "Check answer"
+              )}
+            </SecondaryButton>
+          </>
+        ) : (
+          <>
+            <Textarea
+              value={response}
+              onChange={(event) => {
+                onResponseChange(check, event.target.value);
+              }}
+              placeholder={check.placeholder ?? "Write a concise technical answer."}
+              className="construct-check-textarea"
+            />
+            <SecondaryButton
+              type="button"
+              onClick={() => {
+                void onReview(check);
+              }}
+              disabled={!hasAnsweredCheck(check, response) || busy}
+            >
+              {busy ? (
+                <>
+                  <Spinner data-icon="inline-start" />
+                  Reviewing...
+                </>
+              ) : (
+                "Review answer"
+              )}
+            </SecondaryButton>
+          </>
+        )}
+
+        {review ? (
+          <Alert
+            variant={review.status === "needs-revision" ? "destructive" : "default"}
+            className={`construct-check-review ${review.status}`}
+          >
+            <AlertDescription>
+              <p>{review.message}</p>
+              {review.missingCriteria.length > 0 ? (
+                <div className="construct-review-list">
+                  {review.missingCriteria.map((criterion) => (
+                    <TagChip key={criterion}>{criterion}</TagChip>
+                  ))}
+                </div>
+              ) : null}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -4054,55 +4476,66 @@ function TaskResultPanel({
   const taskStatusClassName = isVerificationBlocked ? "needs-review" : taskResult?.status ?? "";
 
   return (
-    <section className="construct-task-results">
-      <span className="construct-panel-kicker">Execution</span>
+    <Card className="construct-task-results">
+      <CardHeader className="gap-2">
+        <span className="construct-panel-kicker">Execution</span>
+      </CardHeader>
 
-      {taskRunState === "running" ? (
-        <div className="construct-empty-panel">
-          Running targeted tests for {title}.
-        </div>
-      ) : taskError ? (
-        <div className="construct-task-error">{taskError}</div>
-      ) : !taskResult ? (
-        <div className="construct-empty-panel">
-          No targeted test run yet.
-        </div>
-      ) : (
-        <div className="construct-task-result-body">
-          <div className="construct-task-result-meta">
-            <span className={`construct-task-status ${taskStatusClassName}`}>
-              {taskStatusLabel}
-            </span>
-            <span className="construct-brief-chip">
-              {formatDuration(taskResult.durationMs)}
-            </span>
+      <CardContent>
+        {taskRunState === "running" ? (
+          <EmptyPanel
+            title="Running targeted tests"
+            description={`Construct is executing the current validation set for ${title}.`}
+          />
+        ) : taskError ? (
+          <InlineError>{taskError}</InlineError>
+        ) : !taskResult ? (
+          <EmptyPanel
+            title="No targeted run yet"
+            description="Submit the step to see the latest targeted test result and verification guidance."
+          />
+        ) : (
+          <div className="construct-task-result-body">
+            <div className="construct-task-result-meta">
+              <ToolbarPill className={`construct-task-status ${taskStatusClassName}`}>
+                {taskStatusLabel}
+              </ToolbarPill>
+              <ToolbarPill variant="outline" className="construct-brief-chip">
+                {formatDuration(taskResult.durationMs)}
+              </ToolbarPill>
+            </div>
+
+            {taskResult.failures.length > 0 ? (
+              <div className="construct-task-failures">
+                {taskResult.failures.map((failure) => (
+                  <Alert
+                    key={`${failure.testName}-${failure.message}`}
+                    variant="destructive"
+                    className="construct-task-failure"
+                  >
+                    <AlertDescription>
+                      <strong>{failure.testName}</strong>
+                      <p>{failure.message}</p>
+                    </AlertDescription>
+                  </Alert>
+                ))}
+              </div>
+            ) : isVerificationBlocked && rewriteGate ? (
+              <Alert className="construct-task-warning">
+                <AlertDescription>
+                  <strong>Targeted tests passed, but verification is still open.</strong>
+                  <p>{rewriteGate.guidance}</p>
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <Alert className="construct-task-success">
+                <AlertDescription>All targeted tests passed.</AlertDescription>
+              </Alert>
+            )}
           </div>
-
-          {taskResult.failures.length > 0 ? (
-            <div className="construct-task-failures">
-              {taskResult.failures.map((failure) => (
-                <div
-                  key={`${failure.testName}-${failure.message}`}
-                  className="construct-task-failure"
-                >
-                  <strong>{failure.testName}</strong>
-                  <p>{failure.message}</p>
-                </div>
-              ))}
-            </div>
-          ) : isVerificationBlocked && rewriteGate ? (
-            <div className="construct-task-warning">
-              <strong>Targeted tests passed, but verification is still open.</strong>
-              <p>{rewriteGate.guidance}</p>
-            </div>
-          ) : (
-            <div className="construct-task-success">
-              All targeted tests passed.
-            </div>
-          )}
-        </div>
-      )}
-    </section>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -4399,9 +4832,9 @@ function ArchitectTaskBoard({ events }: { events: AgentEvent[] }) {
             {buildPlanningEventTags(group.latestEvent).length > 0 ? (
               <div className="construct-tag-list">
                 {buildPlanningEventTags(group.latestEvent).map((tag) => (
-                  <span key={`${group.key}-${tag}`} className="construct-tag">
+                  <TagChip key={`${group.key}-${tag}`}>
                     {tag}
-                  </span>
+                  </TagChip>
                 ))}
               </div>
             ) : null}

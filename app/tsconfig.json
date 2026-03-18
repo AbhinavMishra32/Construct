@@ -1,6 +1,17 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
+    "paths": {
+      "@/*": [
+        "app/src/renderer/*"
+      ],
+      "@construct/shared": [
+        "pkg/shared/src/index.ts"
+      ],
+      "@construct/shared/*": [
+        "pkg/shared/src/*"
+      ]
+    },
     "types": [
       "node",
       "vite/client"

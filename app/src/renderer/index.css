@@ -1,3 +1,6 @@
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -4952,5 +4955,89 @@ textarea {
 
   .construct-editor-header-actions {
     justify-content: flex-start;
+  }
+}
+
+@layer base {
+  :root {
+    --background: #f5f5f2;
+    --foreground: #111110;
+    --card: rgba(251, 251, 249, 0.94);
+    --card-foreground: #111110;
+    --popover: rgba(255, 255, 252, 0.98);
+    --popover-foreground: #111110;
+    --primary: #111111;
+    --primary-foreground: #ffffff;
+    --secondary: #f3f2ee;
+    --secondary-foreground: #111110;
+    --muted: #f6f6f3;
+    --muted-foreground: #686865;
+    --accent: #ecebe6;
+    --accent-foreground: #111110;
+    --destructive: #b42318;
+    --border: #dfdfd8;
+    --input: #dfdfd8;
+    --ring: rgba(17, 17, 17, 0.18);
+    --chart-1: #1769aa;
+    --chart-2: #0f766e;
+    --chart-3: #9a6700;
+    --chart-4: #6b7280;
+    --chart-5: #4338ca;
+    --radius: 0.875rem;
+    --sidebar: rgba(251, 251, 249, 0.98);
+    --sidebar-foreground: #111110;
+    --sidebar-primary: #111111;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #f1f0ec;
+    --sidebar-accent-foreground: #111110;
+    --sidebar-border: #e3e3de;
+    --sidebar-ring: rgba(17, 17, 17, 0.16);
+  }
+  .dark {
+    --background: #0d0d0f;
+    --foreground: #f4f4f2;
+    --card: rgba(18, 19, 22, 0.94);
+    --card-foreground: #f4f4f2;
+    --popover: rgba(19, 20, 24, 0.98);
+    --popover-foreground: #f4f4f2;
+    --primary: #f3f4f6;
+    --primary-foreground: #111214;
+    --secondary: #18191d;
+    --secondary-foreground: #f4f4f2;
+    --muted: #151618;
+    --muted-foreground: #a4a6ad;
+    --accent: #1c1d21;
+    --accent-foreground: #f4f4f2;
+    --destructive: #fb7185;
+    --border: #27282d;
+    --input: #32343a;
+    --ring: rgba(243, 244, 246, 0.18);
+    --chart-1: #60a5fa;
+    --chart-2: #34d399;
+    --chart-3: #fbbf24;
+    --chart-4: #94a3b8;
+    --chart-5: #818cf8;
+    --sidebar: rgba(17, 18, 21, 0.98);
+    --sidebar-foreground: #f4f4f2;
+    --sidebar-primary: #f3f4f6;
+    --sidebar-primary-foreground: #111214;
+    --sidebar-accent: #1f2126;
+    --sidebar-accent-foreground: #f4f4f2;
+    --sidebar-border: #2d3036;
+    --sidebar-ring: rgba(243, 244, 246, 0.16);
+  }
+  .theme {
+    --font-sans: 'Geist Variable', sans-serif;
+  }
+  * {
+    border-color: var(--border);
+    outline-color: color-mix(in srgb, var(--ring) 50%, transparent);
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+  }
+  html {
+    font-family: var(--font-sans);
   }
 }
