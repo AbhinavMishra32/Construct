@@ -1270,6 +1270,69 @@ textarea {
   gap: 8px;
 }
 
+.construct-agent-live-response {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px 11px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: color-mix(in srgb, var(--panel-muted) 70%, transparent);
+}
+
+.construct-agent-live-response-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.construct-agent-live-response-count {
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.construct-agent-live-response-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.construct-agent-live-response-body p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.construct-agent-live-pulse-track {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.construct-agent-live-pulse {
+  width: 28px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  animation: construct-live-pulse 1.25s ease-in-out infinite;
+}
+
+@keyframes construct-live-pulse {
+  0%,
+  100% {
+    opacity: 0.28;
+    transform: scaleX(0.92);
+  }
+
+  50% {
+    opacity: 0.88;
+    transform: scaleX(1);
+  }
+}
+
 .construct-step-list--planning {
   margin-top: 4px;
 }

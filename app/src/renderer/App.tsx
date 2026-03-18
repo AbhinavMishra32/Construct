@@ -19,6 +19,7 @@ import {
 import {
   completePlanningSession,
   fetchBlueprint,
+  fetchCurrentPlanningState,
   fetchLearnerProfile,
   fetchLearnerModel,
   fetchProjectsDashboard,
@@ -266,17 +267,18 @@ export default function App() {
 
     const loadDashboard = async () => {
       try {
-        const [health, projects, profile] = await Promise.all([
+        const [health, projects, profile, planningState] = await Promise.all([
           fetchRunnerHealth(controller.signal),
           fetchProjectsDashboard(controller.signal),
-          fetchLearnerProfile(controller.signal)
+          fetchLearnerProfile(controller.signal),
+          fetchCurrentPlanningState(controller.signal)
         ]);
 
         setRunnerHealth(health);
         setProjectsDashboard(projects);
         setLearnerProfile(profile);
-        setPlanningSession(null);
-        setPlanningPlan(null);
+        setPlanningSession(planningState.session);
+        setPlanningPlan(planningState.plan);
         setPlanningAnswers({});
         setPlanningEvents([]);
         setPlanningError("");
@@ -300,7 +302,9 @@ export default function App() {
         setPlanningOverlayOpen(false);
         setDashboardOpen(true);
         setStatusMessage(
-          projects.projects.length > 0
+          planningState.session
+            ? "Resume the in-progress Architect run or open an existing project."
+            : projects.projects.length > 0
             ? "Choose a project to resume or start a new one."
             : "Start the first project to generate a guided build."
         );
@@ -1122,6 +1126,11 @@ export default function App() {
                 runnerHealth={runnerHealth}
                 projectsError={projectsError}
                 dashboardBusy={dashboardBusy}
+                planningSession={planningSession}
+                planningPlan={planningPlan}
+                onResumeCreation={() => {
+                  setPlanningOverlayOpen(true);
+                }}
                 onOpenProject={(project) => {
                   void openProject(project);
                 }}
@@ -1832,7 +1841,10 @@ function FloatingGuideCard({
                       <strong>{event.title}</strong>
                       {event.detail ? (
                         isStreamAgentEvent(event) ? (
-                          <pre className="construct-agent-stream-output">{event.detail}</pre>
+                          <LiveAgentResponseIndicator
+                            label="Guide is responding"
+                            chunkCount={getAgentStreamChunkCount(event)}
+                          />
                         ) : (
                           <p>{event.detail}</p>
                         )
@@ -2062,6 +2074,9 @@ function ProjectsHome({
   runnerHealth,
   projectsError,
   dashboardBusy,
+  planningSession,
+  planningPlan,
+  onResumeCreation,
   onOpenProject,
   onStartProject
 }: {
@@ -2070,6 +2085,9 @@ function ProjectsHome({
   runnerHealth: RunnerHealth | null;
   projectsError: string;
   dashboardBusy: boolean;
+  planningSession: PlanningSession | null;
+  planningPlan: GeneratedProjectPlan | null;
+  onResumeCreation: () => void;
   onOpenProject: (project: ProjectSummary) => void;
   onStartProject: () => void;
 }) {
@@ -2122,6 +2140,12 @@ function ProjectsHome({
     (sum, value) => sum + value,
     0
   );
+  const resumeCreationAvailable = Boolean(planningSession);
+  const resumeProgressLabel = planningPlan
+    ? `${planningPlan.steps.length} planned steps`
+    : planningSession
+      ? `${planningSession.questions.length} tailoring questions`
+      : "";
   const passedAttempts = historyEntries.filter((entry) => entry.status === "passed").length;
   const strugglingAttempts = historyEntries.filter(
     (entry) => entry.status === "failed" || entry.status === "needs-review"
@@ -2164,7 +2188,46 @@ function ProjectsHome({
 
       <div className="construct-home-dashboard">
         <section className="construct-home-surface construct-home-surface--project">
-          {activeProject ? (
+          {resumeCreationAvailable ? (
+            <>
+              <div className="construct-home-surface-header">
+                <div>
+                  <span className="construct-home-section-kicker">Creation in progress</span>
+                  <h2>{planningSession?.goal ?? "Resume unfinished project creation"}</h2>
+                </div>
+                <span className="construct-toolbar-pill">{resumeProgressLabel}</span>
+              </div>
+
+              <p className="construct-home-surface-copy">
+                The Architect already has your context, research, and partial generation
+                state. Resume from the latest completed stage instead of starting over.
+              </p>
+
+              <div className="construct-home-inline-note">
+                This picks back up from the current planning session and continues the
+                course/project creation flow from where it last stopped.
+              </div>
+
+              <div className="construct-home-surface-actions">
+                <button
+                  type="button"
+                  onClick={onResumeCreation}
+                  className="construct-primary-button"
+                  disabled={dashboardBusy}
+                >
+                  Resume creation
+                </button>
+                <button
+                  type="button"
+                  onClick={onStartProject}
+                  className="construct-secondary-button"
+                >
+                  Start fresh
+                </button>
+              </div>
+            </>
+          ) : activeProject ? (
+          
             <>
               <div className="construct-home-surface-header">
                 <div>
@@ -4268,7 +4331,7 @@ type ArchitectTaskGroup = {
   status: "working" | "done" | "warning" | "error";
   events: AgentEvent[];
   latestEvent: AgentEvent;
-  streamText: string;
+  streamChunkCount: number;
 };
 
 function ArchitectTaskBoard({ events }: { events: AgentEvent[] }) {
@@ -4283,7 +4346,11 @@ function ArchitectTaskBoard({ events }: { events: AgentEvent[] }) {
           <div>
             <span className="construct-brief-kicker">Live Architect step</span>
             <h3>{latestActiveGroup.label}</h3>
-            <p>{latestActiveGroup.latestEvent.detail ?? latestActiveGroup.latestEvent.title}</p>
+            <p>
+              {isStreamAgentEvent(latestActiveGroup.latestEvent)
+                ? "The Architect is actively generating the current stage."
+                : latestActiveGroup.latestEvent.detail ?? latestActiveGroup.latestEvent.title}
+            </p>
           </div>
           <span className={`construct-agent-task-pill is-${latestActiveGroup.status}`}>
             {formatArchitectStatus(latestActiveGroup.status)}
@@ -4313,14 +4380,20 @@ function ArchitectTaskBoard({ events }: { events: AgentEvent[] }) {
               </span>
             </div>
 
-            <strong>{group.latestEvent.title}</strong>
-            {group.latestEvent.detail ? <p>{group.latestEvent.detail}</p> : null}
+            {!isStreamAgentEvent(group.latestEvent) ? (
+              <>
+                <strong>{group.latestEvent.title}</strong>
+                {group.latestEvent.detail ? <p>{group.latestEvent.detail}</p> : null}
+              </>
+            ) : (
+              <strong>{group.latestEvent.title}</strong>
+            )}
 
-            {group.streamText ? (
-              <div className="construct-agent-stream-block">
-                <span className="construct-panel-kicker">Live model draft</span>
-                <pre className="construct-agent-stream-output">{group.streamText}</pre>
-              </div>
+            {group.streamChunkCount > 0 ? (
+              <LiveAgentResponseIndicator
+                label="Architect is still responding"
+                chunkCount={group.streamChunkCount}
+              />
             ) : null}
 
             {buildPlanningEventTags(group.latestEvent).length > 0 ? (
@@ -4355,7 +4428,7 @@ function buildArchitectTaskGroups(events: AgentEvent[]): ArchitectTaskGroup[] {
         status: architectStatusFromLevel(event.level),
         events: [event],
         latestEvent: event,
-        streamText: isStreamAgentEvent(event) ? event.detail ?? "" : ""
+        streamChunkCount: isStreamAgentEvent(event) ? 1 : 0
       });
       continue;
     }
@@ -4365,11 +4438,58 @@ function buildArchitectTaskGroups(events: AgentEvent[]): ArchitectTaskGroup[] {
     existing.status = architectStatusFromLevel(event.level);
 
     if (isStreamAgentEvent(event)) {
-      existing.streamText = `${existing.streamText}${event.detail ?? ""}`;
+      existing.streamChunkCount += 1;
     }
   }
 
   return order.map((key) => groups.get(key)!);
+}
+
+function LiveAgentResponseIndicator({
+  label,
+  chunkCount
+}: {
+  label: string;
+  chunkCount: number;
+}) {
+  const pulseCount = Math.max(3, Math.min(6, chunkCount || 3));
+
+  return (
+    <div className="construct-agent-live-response" aria-live="polite">
+      <div className="construct-agent-live-response-header">
+        <span className="construct-panel-kicker">{label}</span>
+        <span className="construct-agent-live-response-count">
+          {chunkCount} update{chunkCount === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="construct-agent-live-response-body">
+        <div className="construct-agent-live-pulse-track" aria-hidden="true">
+          {Array.from({ length: pulseCount }).map((_, index) => (
+            <span
+              key={index}
+              className="construct-agent-live-pulse"
+              style={{ animationDelay: `${index * 0.14}s` }}
+            />
+          ))}
+        </div>
+        <p>
+          New model output is arriving and Construct is folding it into the current stage.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function getAgentStreamChunkCount(event: AgentEvent): number {
+  const payload = (event.payload ?? {}) as Record<string, unknown>;
+  const text = String(payload.text ?? event.detail ?? "");
+
+  if (!text) {
+    return 0;
+  }
+
+  const estimatedChunks = Math.ceil(text.length / 120);
+  return Math.max(1, estimatedChunks);
 }
 
 function normalizeArchitectTaskKey(stage: string): string {

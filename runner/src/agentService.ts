@@ -1166,6 +1166,12 @@ export class ConstructAgentService {
 
   private logAgentEvent(job: AgentJobRecord, event: AgentEvent): void {
     const payloadSummary = summarizeAgentEventPayload(event);
+    const isStreamEvent = Boolean(
+      event.payload &&
+        typeof event.payload === "object" &&
+        "stream" in event.payload &&
+        (event.payload as Record<string, unknown>).stream === true
+    );
     const context: Record<string, unknown> = {
       jobId: job.jobId,
       kind: job.kind,
@@ -1174,7 +1180,7 @@ export class ConstructAgentService {
       title: event.title
     };
 
-    if (event.detail) {
+    if (event.detail && !isStreamEvent) {
       context.detail = event.detail;
     }
 
@@ -2304,6 +2310,14 @@ export class ConstructAgentService {
     session: PlanningSession,
     draft: z.infer<typeof GENERATED_PROJECT_PLAN_DRAFT_SCHEMA>
   ): GeneratedProjectPlan {
+    const normalizedSteps = draft.steps.map((step) => ({
+      ...step,
+      kind:
+        (step.kind as string) === "component"
+          ? "implementation"
+          : step.kind
+    }));
+
     return GeneratedProjectPlanSchema.parse({
       sessionId: session.sessionId,
       goal: session.goal,
@@ -2313,7 +2327,7 @@ export class ConstructAgentService {
       summary: draft.summary,
       knowledgeGraph: draft.knowledgeGraph,
       architecture: draft.architecture,
-      steps: draft.steps,
+      steps: normalizedSteps,
       suggestedFirstStepId: draft.suggestedFirstStepId
     });
   }
@@ -3571,6 +3585,20 @@ function extractJsonObject(text: string): string {
 function summarizeAgentEventPayload(event: AgentEvent): Record<string, unknown> | null {
   if (!event.payload) {
     return null;
+  }
+
+  if (
+    typeof event.payload === "object" &&
+    "stream" in event.payload &&
+    (event.payload as Record<string, unknown>).stream === true
+  ) {
+    const payload = event.payload as Record<string, unknown>;
+    const text = typeof payload.text === "string" ? payload.text : "";
+    return {
+      stream: true,
+      label: typeof payload.label === "string" ? payload.label : undefined,
+      chunkChars: text.length
+    };
   }
 
   if (event.stage.startsWith("research")) {
