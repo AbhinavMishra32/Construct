@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync
+} from "node:fs";
 import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 
 import {
   LearnerHistoryEntrySchema,
@@ -54,6 +58,10 @@ type AttemptRow = {
   post_task_snapshot_json: string | null;
 };
 
+type PersistedAttemptRow = AttemptRow & {
+  blueprint_path: string;
+};
+
 type HistoryRow = {
   step_id: string;
   status: LearnerHistoryEntry["status"];
@@ -62,6 +70,42 @@ type HistoryRow = {
   hints_used: number;
   paste_ratio: number;
   recorded_at: string;
+};
+
+type TaskLifecycleJsonState = {
+  sessions: SessionRow[];
+  attempts: PersistedAttemptRow[];
+  history: HistoryRow[];
+};
+
+type TaskLifecycleBackend = {
+  readonly storageKind: "sqlite" | "json";
+  initialize(): Promise<void> | void;
+  close(): void;
+  insertSession(session: TaskSession): void;
+  updateSession(session: TaskSession): void;
+  getSessionById(sessionId: string): SessionRow | undefined;
+  getActiveSession(blueprintPath: string, stepId: string): SessionRow | undefined;
+  getNextAttemptNumber(blueprintPath: string, stepId: string): number;
+  insertAttempt(blueprintPath: string, attempt: TaskAttempt): void;
+  countAttempts(stepId: string, blueprintPath: string): number;
+  getLatestAttempt(stepId: string, blueprintPath: string): AttemptRow | undefined;
+  insertHistory(entry: LearnerHistoryEntry): void;
+  listHistory(): HistoryRow[];
+};
+
+type SqliteDatabaseLike = {
+  exec(sql: string): void;
+  close(): void;
+  prepare(sql: string): {
+    all(...params: unknown[]): unknown[];
+    get(...params: unknown[]): unknown;
+    run(...params: unknown[]): unknown;
+  };
+};
+
+type SqliteModule = {
+  DatabaseSync: new (path: string) => SqliteDatabaseLike;
 };
 
 const REWRITE_GATE_POLICY = {
@@ -79,7 +123,7 @@ export class TaskLifecycleService {
   private readonly testRunner: TestRunnerManager;
   private readonly databasePath: string;
   private readonly now: () => Date;
-  private database?: DatabaseSync;
+  private backend?: TaskLifecycleBackend;
   private initializationPromise?: Promise<void>;
 
   constructor(
@@ -129,33 +173,7 @@ export class TaskLifecycleService {
       rewriteGate: null
     };
 
-    this.getDatabase()
-      .prepare(
-        `
-          INSERT INTO task_sessions (
-            session_id,
-            blueprint_path,
-            step_id,
-            status,
-            started_at,
-            latest_attempt,
-            pre_task_snapshot_json,
-            rewrite_gate_json
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `
-      )
-      .run(
-        session.sessionId,
-        session.blueprintPath,
-        session.stepId,
-        session.status,
-        session.startedAt,
-        session.latestAttempt,
-        JSON.stringify(session.preTaskSnapshot),
-        null
-      );
-
+    this.getBackend().insertSession(session);
     this.recordHistory({
       stepId: request.stepId,
       status: "started",
@@ -234,52 +252,9 @@ export class TaskLifecycleService {
       rewriteGate: attemptStatus === "passed" ? null : nextRewriteGate
     };
 
-    const database = this.getDatabase();
-    database
-      .prepare(
-        `
-          INSERT INTO task_attempts (
-            attempt_number,
-            session_id,
-            step_id,
-            blueprint_path,
-            status,
-            recorded_at,
-            time_spent_ms,
-            telemetry_json,
-            task_result_json,
-            post_task_snapshot_json
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `
-      )
-      .run(
-        attempt.attempt,
-        attempt.sessionId,
-        attempt.stepId,
-        request.blueprintPath,
-        attempt.status,
-        attempt.recordedAt,
-        attempt.timeSpentMs,
-        JSON.stringify(attempt.telemetry),
-        JSON.stringify(attempt.result),
-        attempt.postTaskSnapshot ? JSON.stringify(attempt.postTaskSnapshot) : null
-      );
-    database
-      .prepare(
-        `
-          UPDATE task_sessions
-          SET status = ?, latest_attempt = ?
-            , rewrite_gate_json = ?
-          WHERE session_id = ?
-        `
-      )
-      .run(
-        updatedSession.status,
-        updatedSession.latestAttempt,
-        updatedSession.rewriteGate ? JSON.stringify(updatedSession.rewriteGate) : null,
-        updatedSession.sessionId
-      );
+    const backend = this.getBackend();
+    backend.insertAttempt(request.blueprintPath, attempt);
+    backend.updateSession(updatedSession);
 
     this.recordHistory({
       stepId: request.stepId,
@@ -302,40 +277,12 @@ export class TaskLifecycleService {
   async getTaskProgress(stepId: string, blueprintPath: string): Promise<TaskProgress> {
     await this.ensureReady();
     const normalizedBlueprintPath = this.normalizeBlueprintPath(blueprintPath);
-    const database = this.getDatabase();
-    const countRow = database
-      .prepare(
-        `
-          SELECT COUNT(*) AS total_attempts
-          FROM task_attempts
-          WHERE step_id = ? AND blueprint_path = ?
-        `
-      )
-      .get(stepId, normalizedBlueprintPath) as { total_attempts: number };
-    const latestAttemptRow = database
-      .prepare(
-        `
-          SELECT
-            attempt_number,
-            session_id,
-            step_id,
-            status,
-            recorded_at,
-            time_spent_ms,
-            telemetry_json,
-            task_result_json,
-            post_task_snapshot_json
-          FROM task_attempts
-          WHERE step_id = ? AND blueprint_path = ?
-          ORDER BY attempt_number DESC
-          LIMIT 1
-        `
-      )
-      .get(stepId, normalizedBlueprintPath) as AttemptRow | undefined;
+    const backend = this.getBackend();
+    const latestAttemptRow = backend.getLatestAttempt(stepId, normalizedBlueprintPath);
 
     return TaskProgressSchema.parse({
       stepId,
-      totalAttempts: countRow?.total_attempts ?? 0,
+      totalAttempts: backend.countAttempts(stepId, normalizedBlueprintPath),
       activeSession: this.getActiveSession(normalizedBlueprintPath, stepId),
       latestAttempt: latestAttemptRow ? deserializeAttempt(latestAttemptRow) : null
     });
@@ -343,24 +290,7 @@ export class TaskLifecycleService {
 
   async getLearnerModel(): Promise<LearnerModel> {
     await this.ensureReady();
-    const database = this.getDatabase();
-    const historyRows = database
-      .prepare(
-        `
-          SELECT
-            step_id,
-            status,
-            attempt,
-            time_spent_ms,
-            hints_used,
-            paste_ratio,
-            recorded_at
-          FROM learner_history
-          ORDER BY id ASC
-        `
-      )
-      .all() as HistoryRow[];
-    const history = historyRows.map((row) =>
+    const history = this.getBackend().listHistory().map((row) =>
       LearnerHistoryEntrySchema.parse({
         stepId: row.step_id,
         status: row.status,
@@ -385,8 +315,8 @@ export class TaskLifecycleService {
   }
 
   close(): void {
-    this.database?.close();
-    this.database = undefined;
+    this.backend?.close();
+    this.backend = undefined;
     this.initializationPromise = undefined;
   }
 
@@ -399,14 +329,231 @@ export class TaskLifecycleService {
   }
 
   private assertReady(): void {
-    if (!this.database) {
+    if (!this.backend) {
       throw new Error("TaskLifecycleService has not been initialized.");
     }
   }
 
   private async initialize(): Promise<void> {
-    await mkdir(path.dirname(this.databasePath), { recursive: true });
-    this.database = new DatabaseSync(this.databasePath);
+    this.backend = await createTaskLifecycleBackend(this.databasePath);
+    await this.backend.initialize();
+  }
+
+  private async resolveStep(blueprintPath: string, stepId: string): Promise<void> {
+    const blueprint = await loadBlueprint(blueprintPath);
+    const step = blueprint.steps.find((entry) => entry.id === stepId);
+
+    if (!step) {
+      throw new Error(`Unknown blueprint step: ${stepId}.`);
+    }
+  }
+
+  private getSessionById(sessionId: string): TaskSession | null {
+    this.assertReady();
+    const row = this.getBackend().getSessionById(sessionId);
+    return row ? deserializeSession(row) : null;
+  }
+
+  private getActiveSession(blueprintPath: string, stepId: string): TaskSession | null {
+    this.assertReady();
+    const row = this.getBackend().getActiveSession(blueprintPath, stepId);
+    return row ? deserializeSession(row) : null;
+  }
+
+  private getNextAttemptNumber(blueprintPath: string, stepId: string): number {
+    this.assertReady();
+    return this.getBackend().getNextAttemptNumber(blueprintPath, stepId);
+  }
+
+  private recordHistory(entry: LearnerHistoryEntry): void {
+    this.assertReady();
+    this.getBackend().insertHistory(entry);
+  }
+
+  private getBackend(): TaskLifecycleBackend {
+    if (!this.backend) {
+      throw new Error("TaskLifecycleService has not been initialized.");
+    }
+
+    return this.backend;
+  }
+
+  private normalizeTaskStartRequest(input: TaskStartRequest): TaskStartRequest {
+    const request = TaskStartRequestSchema.parse(input);
+
+    return {
+      ...request,
+      blueprintPath: this.normalizeBlueprintPath(request.blueprintPath)
+    };
+  }
+
+  private normalizeTaskSubmitRequest(input: TaskSubmitRequest): TaskSubmitRequest {
+    const request = TaskSubmitRequestSchema.parse(input);
+
+    return {
+      ...request,
+      blueprintPath: this.normalizeBlueprintPath(request.blueprintPath)
+    };
+  }
+
+  private normalizeBlueprintPath(blueprintPath: string): string {
+    if (path.isAbsolute(blueprintPath)) {
+      return path.normalize(blueprintPath);
+    }
+
+    const candidates = [
+      path.resolve(blueprintPath),
+      path.resolve(this.workspaceRoot, blueprintPath),
+      path.resolve(path.dirname(this.workspaceRoot), blueprintPath),
+      path.resolve(path.dirname(path.dirname(this.workspaceRoot)), blueprintPath),
+      path.resolve(this.workspaceRoot, path.basename(blueprintPath))
+    ];
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        return path.normalize(candidate);
+      }
+    }
+
+    return path.resolve(blueprintPath);
+  }
+}
+
+class JsonTaskLifecycleBackend implements TaskLifecycleBackend {
+  readonly storageKind = "json" as const;
+
+  private readonly statePath: string;
+  private state: TaskLifecycleJsonState = cloneEmptyJsonState();
+
+  constructor(databasePath: string) {
+    this.statePath = resolveJsonStatePath(databasePath);
+  }
+
+  initialize(): void {
+    mkdirSync(path.dirname(this.statePath), { recursive: true });
+
+    if (!existsSync(this.statePath)) {
+      this.state = cloneEmptyJsonState();
+      this.persistState();
+      return;
+    }
+
+    const raw = readFileSync(this.statePath, "utf8");
+    const parsed = JSON.parse(raw) as Partial<TaskLifecycleJsonState>;
+    this.state = {
+      sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+      attempts: Array.isArray(parsed.attempts) ? parsed.attempts : [],
+      history: Array.isArray(parsed.history) ? parsed.history : []
+    };
+  }
+
+  close(): void {}
+
+  insertSession(session: TaskSession): void {
+    this.state.sessions.push(serializeSession(session));
+    this.persistState();
+  }
+
+  updateSession(session: TaskSession): void {
+    const sessionRow = serializeSession(session);
+    const index = this.state.sessions.findIndex((row) => row.session_id === session.sessionId);
+
+    if (index < 0) {
+      throw new Error(`Unknown task session: ${session.sessionId}.`);
+    }
+
+    this.state.sessions[index] = sessionRow;
+    this.persistState();
+  }
+
+  getSessionById(sessionId: string): SessionRow | undefined {
+    return this.state.sessions.find((row) => row.session_id === sessionId);
+  }
+
+  getActiveSession(blueprintPath: string, stepId: string): SessionRow | undefined {
+    return [...this.state.sessions]
+      .reverse()
+      .find(
+        (row) =>
+          row.blueprint_path === blueprintPath &&
+          row.step_id === stepId &&
+          row.status === "active"
+      );
+  }
+
+  getNextAttemptNumber(blueprintPath: string, stepId: string): number {
+    return (
+      this.state.attempts.reduce((maximum, row) => {
+        if (row.blueprint_path !== blueprintPath || row.step_id !== stepId) {
+          return maximum;
+        }
+
+        return Math.max(maximum, row.attempt_number);
+      }, 0) + 1
+    );
+  }
+
+  insertAttempt(blueprintPath: string, attempt: TaskAttempt): void {
+    this.state.attempts.push({
+      ...serializeAttempt(attempt),
+      blueprint_path: blueprintPath
+    });
+    this.persistState();
+  }
+
+  countAttempts(stepId: string, blueprintPath: string): number {
+    return this.state.attempts.filter(
+      (row) => row.step_id === stepId && row.blueprint_path === blueprintPath
+    ).length;
+  }
+
+  getLatestAttempt(stepId: string, blueprintPath: string): AttemptRow | undefined {
+    return this.state.attempts
+      .filter((row) => row.step_id === stepId && row.blueprint_path === blueprintPath)
+      .sort((left, right) => right.attempt_number - left.attempt_number)[0];
+  }
+
+  insertHistory(entry: LearnerHistoryEntry): void {
+    this.state.history.push({
+      step_id: entry.stepId,
+      status: entry.status,
+      attempt: entry.attempt,
+      time_spent_ms: entry.timeSpentMs,
+      hints_used: entry.hintsUsed,
+      paste_ratio: entry.pasteRatio,
+      recorded_at: entry.recordedAt
+    });
+    this.persistState();
+  }
+
+  listHistory(): HistoryRow[] {
+    return [...this.state.history];
+  }
+
+  private persistState(): void {
+    const nextState = JSON.stringify(this.state, null, 2);
+    const tempPath = `${this.statePath}.tmp`;
+
+    writeFileSync(tempPath, nextState, "utf8");
+    renameSync(tempPath, this.statePath);
+  }
+}
+
+class SqliteTaskLifecycleBackend implements TaskLifecycleBackend {
+  readonly storageKind = "sqlite" as const;
+
+  private readonly databasePath: string;
+  private readonly DatabaseSync: SqliteModule["DatabaseSync"];
+  private database?: SqliteDatabaseLike;
+
+  constructor(databasePath: string, DatabaseSync: SqliteModule["DatabaseSync"]) {
+    this.databasePath = databasePath;
+    this.DatabaseSync = DatabaseSync;
+  }
+
+  initialize(): void {
+    mkdirSync(path.dirname(this.databasePath), { recursive: true });
+    this.database = new this.DatabaseSync(this.databasePath);
     this.database.exec("PRAGMA foreign_keys = ON;");
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS task_sessions (
@@ -453,21 +600,64 @@ export class TaskLifecycleService {
         recorded_at TEXT NOT NULL
       );
     `);
-    ensureColumn(this.database, "task_sessions", "rewrite_gate_json", "TEXT");
+    ensureColumn(this.getDatabase(), "task_sessions", "rewrite_gate_json", "TEXT");
   }
 
-  private async resolveStep(blueprintPath: string, stepId: string): Promise<void> {
-    const blueprint = await loadBlueprint(blueprintPath);
-    const step = blueprint.steps.find((entry) => entry.id === stepId);
-
-    if (!step) {
-      throw new Error(`Unknown blueprint step: ${stepId}.`);
-    }
+  close(): void {
+    this.database?.close();
+    this.database = undefined;
   }
 
-  private getSessionById(sessionId: string): TaskSession | null {
-    this.assertReady();
-    const row = this.getDatabase()
+  insertSession(session: TaskSession): void {
+    const sessionRow = serializeSession(session);
+    this.getDatabase()
+      .prepare(
+        `
+          INSERT INTO task_sessions (
+            session_id,
+            blueprint_path,
+            step_id,
+            status,
+            started_at,
+            latest_attempt,
+            pre_task_snapshot_json,
+            rewrite_gate_json
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        sessionRow.session_id,
+        sessionRow.blueprint_path,
+        sessionRow.step_id,
+        sessionRow.status,
+        sessionRow.started_at,
+        sessionRow.latest_attempt,
+        sessionRow.pre_task_snapshot_json,
+        sessionRow.rewrite_gate_json
+      );
+  }
+
+  updateSession(session: TaskSession): void {
+    const sessionRow = serializeSession(session);
+    this.getDatabase()
+      .prepare(
+        `
+          UPDATE task_sessions
+          SET status = ?, latest_attempt = ?, rewrite_gate_json = ?
+          WHERE session_id = ?
+        `
+      )
+      .run(
+        sessionRow.status,
+        sessionRow.latest_attempt,
+        sessionRow.rewrite_gate_json,
+        sessionRow.session_id
+      );
+  }
+
+  getSessionById(sessionId: string): SessionRow | undefined {
+    return this.getDatabase()
       .prepare(
         `
           SELECT
@@ -485,13 +675,10 @@ export class TaskLifecycleService {
         `
       )
       .get(sessionId) as SessionRow | undefined;
-
-    return row ? deserializeSession(row) : null;
   }
 
-  private getActiveSession(blueprintPath: string, stepId: string): TaskSession | null {
-    this.assertReady();
-    const row = this.getDatabase()
+  getActiveSession(blueprintPath: string, stepId: string): SessionRow | undefined {
+    return this.getDatabase()
       .prepare(
         `
           SELECT
@@ -510,12 +697,9 @@ export class TaskLifecycleService {
         `
       )
       .get(blueprintPath, stepId) as SessionRow | undefined;
-
-    return row ? deserializeSession(row) : null;
   }
 
-  private getNextAttemptNumber(blueprintPath: string, stepId: string): number {
-    this.assertReady();
+  getNextAttemptNumber(blueprintPath: string, stepId: string): number {
     const row = this.getDatabase()
       .prepare(
         `
@@ -529,8 +713,78 @@ export class TaskLifecycleService {
     return row?.next_attempt ?? 1;
   }
 
-  private recordHistory(entry: LearnerHistoryEntry): void {
-    this.assertReady();
+  insertAttempt(blueprintPath: string, attempt: TaskAttempt): void {
+    const attemptRow = serializeAttempt(attempt);
+    this.getDatabase()
+      .prepare(
+        `
+          INSERT INTO task_attempts (
+            attempt_number,
+            session_id,
+            step_id,
+            blueprint_path,
+            status,
+            recorded_at,
+            time_spent_ms,
+            telemetry_json,
+            task_result_json,
+            post_task_snapshot_json
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        attemptRow.attempt_number,
+        attemptRow.session_id,
+        attemptRow.step_id,
+        blueprintPath,
+        attemptRow.status,
+        attemptRow.recorded_at,
+        attemptRow.time_spent_ms,
+        attemptRow.telemetry_json,
+        attemptRow.task_result_json,
+        attemptRow.post_task_snapshot_json
+      );
+  }
+
+  countAttempts(stepId: string, blueprintPath: string): number {
+    const row = this.getDatabase()
+      .prepare(
+        `
+          SELECT COUNT(*) AS total_attempts
+          FROM task_attempts
+          WHERE step_id = ? AND blueprint_path = ?
+        `
+      )
+      .get(stepId, blueprintPath) as { total_attempts: number } | undefined;
+
+    return row?.total_attempts ?? 0;
+  }
+
+  getLatestAttempt(stepId: string, blueprintPath: string): AttemptRow | undefined {
+    return this.getDatabase()
+      .prepare(
+        `
+          SELECT
+            attempt_number,
+            session_id,
+            step_id,
+            status,
+            recorded_at,
+            time_spent_ms,
+            telemetry_json,
+            task_result_json,
+            post_task_snapshot_json
+          FROM task_attempts
+          WHERE step_id = ? AND blueprint_path = ?
+          ORDER BY attempt_number DESC
+          LIMIT 1
+        `
+      )
+      .get(stepId, blueprintPath) as AttemptRow | undefined;
+  }
+
+  insertHistory(entry: LearnerHistoryEntry): void {
     this.getDatabase()
       .prepare(
         `
@@ -557,52 +811,31 @@ export class TaskLifecycleService {
       );
   }
 
-  private getDatabase(): DatabaseSync {
+  listHistory(): HistoryRow[] {
+    return this.getDatabase()
+      .prepare(
+        `
+          SELECT
+            step_id,
+            status,
+            attempt,
+            time_spent_ms,
+            hints_used,
+            paste_ratio,
+            recorded_at
+          FROM learner_history
+          ORDER BY id ASC
+        `
+      )
+      .all() as HistoryRow[];
+  }
+
+  private getDatabase(): SqliteDatabaseLike {
     if (!this.database) {
       throw new Error("TaskLifecycleService has not been initialized.");
     }
 
     return this.database;
-  }
-
-  private normalizeTaskStartRequest(input: TaskStartRequest): TaskStartRequest {
-    const request = TaskStartRequestSchema.parse(input);
-
-    return {
-      ...request,
-      blueprintPath: this.normalizeBlueprintPath(request.blueprintPath)
-    };
-  }
-
-  private normalizeTaskSubmitRequest(input: TaskSubmitRequest): TaskSubmitRequest {
-    const request = TaskSubmitRequestSchema.parse(input);
-
-    return {
-      ...request,
-      blueprintPath: this.normalizeBlueprintPath(request.blueprintPath)
-    };
-  }
-
-  private normalizeBlueprintPath(blueprintPath: string): string {
-    if (path.isAbsolute(blueprintPath)) {
-      return path.normalize(blueprintPath);
-    }
-
-    const candidates = [
-      path.resolve(blueprintPath),
-      path.resolve(this.workspaceRoot, blueprintPath),
-      path.resolve(path.dirname(this.workspaceRoot), blueprintPath),
-      path.resolve(path.dirname(path.dirname(this.workspaceRoot)), blueprintPath),
-      path.resolve(this.workspaceRoot, path.basename(blueprintPath))
-    ];
-
-    for (const candidate of candidates) {
-      if (existsSync(candidate)) {
-        return path.normalize(candidate);
-      }
-    }
-
-    return path.resolve(blueprintPath);
   }
 }
 
@@ -635,6 +868,35 @@ function deserializeAttempt(row: AttemptRow): TaskAttempt {
       ? (JSON.parse(row.post_task_snapshot_json) as SnapshotRecord)
       : undefined
   });
+}
+
+function serializeSession(session: TaskSession): SessionRow {
+  return {
+    session_id: session.sessionId,
+    blueprint_path: session.blueprintPath,
+    step_id: session.stepId,
+    status: session.status,
+    started_at: session.startedAt,
+    latest_attempt: session.latestAttempt,
+    pre_task_snapshot_json: JSON.stringify(session.preTaskSnapshot),
+    rewrite_gate_json: session.rewriteGate ? JSON.stringify(session.rewriteGate) : null
+  };
+}
+
+function serializeAttempt(attempt: TaskAttempt): AttemptRow {
+  return {
+    attempt_number: attempt.attempt,
+    session_id: attempt.sessionId,
+    step_id: attempt.stepId,
+    status: attempt.status,
+    recorded_at: attempt.recordedAt,
+    time_spent_ms: attempt.timeSpentMs,
+    telemetry_json: JSON.stringify(attempt.telemetry),
+    task_result_json: JSON.stringify(attempt.result),
+    post_task_snapshot_json: attempt.postTaskSnapshot
+      ? JSON.stringify(attempt.postTaskSnapshot)
+      : null
+  };
 }
 
 function normalizeTelemetry(telemetry: TaskTelemetry): TaskTelemetry {
@@ -682,10 +944,7 @@ function meetsRewriteGate(gate: RewriteGate, telemetry: TaskTelemetry): boolean 
 function createRewriteGate(telemetry: TaskTelemetry, recordedAt: string): RewriteGate {
   const requiredTypedChars = Math.max(
     REWRITE_GATE_POLICY.requiredTypedCharsFloor,
-    Math.min(
-      REWRITE_GATE_POLICY.requiredTypedCharsCeil,
-      telemetry.pastedChars
-    )
+    Math.min(REWRITE_GATE_POLICY.requiredTypedCharsCeil, telemetry.pastedChars)
   );
 
   return {
@@ -702,8 +961,60 @@ function createRewriteGate(telemetry: TaskTelemetry, recordedAt: string): Rewrit
   };
 }
 
+async function createTaskLifecycleBackend(
+  databasePath: string
+): Promise<TaskLifecycleBackend> {
+  const sqliteModule = await loadSqliteModule();
+
+  if (sqliteModule) {
+    return new SqliteTaskLifecycleBackend(databasePath, sqliteModule.DatabaseSync);
+  }
+
+  console.warn(
+    "[construct-task-lifecycle] node:sqlite is unavailable; falling back to JSON task state."
+  );
+  return new JsonTaskLifecycleBackend(databasePath);
+}
+
+async function loadSqliteModule(): Promise<SqliteModule | null> {
+  try {
+    return (await import("node:sqlite")) as SqliteModule;
+  } catch (error) {
+    if (isNodeSqliteUnavailable(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function isNodeSqliteUnavailable(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return (
+    error.message.includes("node:sqlite") ||
+    ("code" in error && error.code === "ERR_UNKNOWN_BUILTIN_MODULE")
+  );
+}
+
+function resolveJsonStatePath(databasePath: string): string {
+  return databasePath.endsWith(".sqlite")
+    ? databasePath.replace(/\.sqlite$/u, ".json")
+    : `${databasePath}.json`;
+}
+
+function cloneEmptyJsonState(): TaskLifecycleJsonState {
+  return {
+    sessions: [],
+    attempts: [],
+    history: []
+  };
+}
+
 function ensureColumn(
-  database: DatabaseSync,
+  database: SqliteDatabaseLike,
   tableName: string,
   columnName: string,
   definition: string
