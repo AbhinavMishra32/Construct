@@ -49,12 +49,7 @@ import {
   CardTitle
 } from "@/components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogHeader,
-  DialogTitle
 } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -3317,17 +3312,12 @@ function PlanningOverlay({
         ) : null}
 
         {isQuestionPhase && currentQuestion && !planningBusy ? (
-          <Dialog open>
-            <DialogContent
-              showCloseButton={false}
-              className="construct-planning-question-modal w-[min(760px,calc(100vw-32px))] max-w-none gap-0 border border-border bg-background p-0 text-foreground shadow-2xl ring-1 ring-foreground/10"
-            >
-              <DialogHeader className="sr-only">
-                <DialogTitle>Project tailoring question</DialogTitle>
-                <DialogDescription>
-                  Help the Architect personalize the project flow before generation begins.
-                </DialogDescription>
-              </DialogHeader>
+          <section className="construct-planning-question-shell" aria-label="Project tailoring question">
+            <div className="sr-only">
+              <h2>Project tailoring question</h2>
+              <p>Help the Architect personalize the project flow before generation begins.</p>
+            </div>
+            <div className="construct-planning-question-modal w-[min(760px,calc(100vw-32px))] max-w-none gap-0 border border-border bg-background p-0 text-foreground shadow-2xl ring-1 ring-foreground/10">
               <div className="construct-planning-question-header">
                 <div>
                   <span className="construct-panel-kicker">Project tailoring</span>
@@ -3482,8 +3472,8 @@ function PlanningOverlay({
                   </PrimaryButton>
                 </div>
               </footer>
-            </DialogContent>
-          </Dialog>
+            </div>
+          </section>
         ) : null}
 
         {planningError ? <InlineError>{planningError}</InlineError> : null}

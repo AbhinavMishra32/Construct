@@ -4211,6 +4211,12 @@ textarea {
   backdrop-filter: blur(3px);
 }
 
+.construct-planning-question-shell {
+  display: flex;
+  justify-content: center;
+  padding: 0 18px 18px;
+}
+
 .construct-planning-question-modal {
   width: min(760px, calc(100% - 32px));
   max-height: min(740px, calc(100% - 48px));
