@@ -3057,24 +3057,18 @@ function PlanningOverlay({
   }, [planningSession, planningPlan, planningAnswers]);
 
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) {
-          onClose();
-        }
-      }}
-    >
-      <DialogContent
-        showCloseButton={false}
-        className="construct-planning-panel max-w-none gap-0 border-0 bg-transparent p-0 shadow-none ring-0 sm:max-w-[calc(100vw-24px)]"
-      >
-        <DialogHeader className="sr-only">
-          <DialogTitle>Create a new project</DialogTitle>
-          <DialogDescription>
-            Work with the Architect to tailor and generate a guided project workspace.
-          </DialogDescription>
-        </DialogHeader>
+    <div className="construct-planning-overlay-shell" role="dialog" aria-modal="true" aria-label="Create a new project">
+      <button
+        type="button"
+        className="construct-planning-overlay-backdrop"
+        aria-label="Close project creation"
+        onClick={onClose}
+      />
+      <section className="construct-planning-panel max-w-none gap-0 border border-border bg-background p-0 text-foreground shadow-2xl ring-1 ring-foreground/10 sm:max-w-[calc(100vw-24px)]">
+        <div className="sr-only" aria-hidden="false">
+          <h1>Create a new project</h1>
+          <p>Work with the Architect to tailor and generate a guided project workspace.</p>
+        </div>
         <header className="construct-planning-header">
           <div className="construct-planning-header-copy">
             <span className="construct-brief-kicker">Architect</span>
@@ -3326,7 +3320,7 @@ function PlanningOverlay({
           <Dialog open>
             <DialogContent
               showCloseButton={false}
-              className="construct-planning-question-modal w-[min(760px,calc(100vw-32px))] max-w-none gap-0 border-0 bg-transparent p-0 shadow-none ring-0"
+              className="construct-planning-question-modal w-[min(760px,calc(100vw-32px))] max-w-none gap-0 border border-border bg-background p-0 text-foreground shadow-2xl ring-1 ring-foreground/10"
             >
               <DialogHeader className="sr-only">
                 <DialogTitle>Project tailoring question</DialogTitle>
@@ -3514,8 +3508,8 @@ function PlanningOverlay({
             )
           ) : null}
         </footer>
-      </DialogContent>
-    </Dialog>
+      </section>
+    </div>
   );
 }
 

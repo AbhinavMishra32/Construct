@@ -4074,6 +4074,28 @@ textarea {
   border-radius: 14px;
 }
 
+.construct-planning-overlay-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: rgba(7, 10, 18, 0.16);
+}
+
+.construct-planning-overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border: 0;
+  padding: 0;
+  background: rgba(7, 10, 18, 0.58);
+  backdrop-filter: blur(16px);
+  cursor: default;
+}
+
 .construct-planning-overlay {
   padding: 12px;
   background: color-mix(in srgb, var(--panel-overlay) 98%, transparent);
@@ -4081,6 +4103,8 @@ textarea {
 }
 
 .construct-planning-panel {
+  position: relative;
+  z-index: 1;
   width: calc(100% - 8px);
   max-width: 1360px;
   min-height: calc(100vh - 24px);
@@ -4088,8 +4112,8 @@ textarea {
   padding: 0;
   overflow: hidden;
   border-radius: 18px;
-  background: var(--panel-bg);
-  box-shadow: 0 18px 40px color-mix(in srgb, var(--text) 10%, transparent);
+  background: linear-gradient(180deg, var(--panel-bg), color-mix(in srgb, var(--panel-bg) 92%, var(--panel-muted)));
+  box-shadow: 0 28px 64px color-mix(in srgb, var(--text) 24%, transparent);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
