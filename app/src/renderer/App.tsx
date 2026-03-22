@@ -474,10 +474,11 @@ export default function App() {
   const telemetryRef = useRef<TaskTelemetry>(createEmptyTelemetry());
   const pendingPasteCharsRef = useRef(0);
   const rewriteGateRef = useRef<RewriteGate | null>(null);
+  const runtimeSteps = useMemo(() => getRuntimeSteps(blueprint), [blueprint]);
 
   const activeStep = useMemo(
-    () => blueprint?.steps.find((step) => step.id === activeStepId) ?? null,
-    [activeStepId, blueprint]
+    () => runtimeSteps.find((step) => step.id === activeStepId) ?? null,
+    [activeStepId, runtimeSteps]
   );
   const workspaceTree = useMemo(() => buildWorkspaceTree(workspaceFiles), [workspaceFiles]);
   const filteredTree = useMemo(
@@ -501,8 +502,8 @@ export default function App() {
       ]
     : stepHints;
   const activeStepIndex = useMemo(
-    () => blueprint?.steps.findIndex((step) => step.id === activeStepId) ?? -1,
-    [activeStepId, blueprint]
+    () => runtimeSteps.findIndex((step) => step.id === activeStepId) ?? -1,
+    [activeStepId, runtimeSteps]
   );
   const checksAnswered = useMemo(() => {
     if (!activeStep) {
@@ -842,8 +843,8 @@ export default function App() {
 
     const preferredStep =
       (preferredStepId
-        ? blueprintEnvelope.blueprint.steps.find((step) => step.id === preferredStepId)
-        : null) ?? blueprintEnvelope.blueprint.steps[0] ?? null;
+        ? getRuntimeSteps(blueprintEnvelope.blueprint).find((step) => step.id === preferredStepId)
+        : null) ?? getRuntimeSteps(blueprintEnvelope.blueprint)[0] ?? null;
 
     setBlueprint(blueprintEnvelope.blueprint);
     setBlueprintPath(blueprintEnvelope.blueprintPath);
@@ -1006,7 +1007,7 @@ export default function App() {
 
   const handleFileClick = async (filePath: string) => {
     const linkedStep =
-      blueprint?.steps.find((step) => step.anchor.file === filePath) ?? null;
+      runtimeSteps.find((step) => step.anchor.file === filePath) ?? null;
     await openFile(filePath, linkedStep);
   };
 
@@ -1167,7 +1168,7 @@ export default function App() {
           ...current,
           [check.id]: (current[check.id] ?? 0) + 1
         }));
-        setStatusMessage(`Review the lesson again before retrying ${check.id}.`);
+        setStatusMessage(`Review the step context again before retrying ${check.id}.`);
       } else {
         setStatusMessage(`Check complete for ${activeStep.title}.`);
       }
@@ -1328,8 +1329,10 @@ export default function App() {
       resetTaskTelemetry();
       const firstGeneratedStep =
         (activeProjectSummary?.currentStepId
-          ? openedBlueprint.steps.find((step) => step.id === activeProjectSummary.currentStepId)
-          : null) ?? openedBlueprint.steps[0];
+          ? getRuntimeSteps(openedBlueprint).find(
+              (step) => step.id === activeProjectSummary.currentStepId
+            )
+          : null) ?? getRuntimeSteps(openedBlueprint)[0];
 
       if (firstGeneratedStep) {
         setActiveStepId(firstGeneratedStep.id);
@@ -1338,7 +1341,7 @@ export default function App() {
       setDashboardOpen(false);
       setPlanningOverlayOpen(false);
       setStatusMessage(
-        `Generated ${openedBlueprint.name}. Start the lesson, then move into the code workspace when the step opens up.`
+        `Generated ${openedBlueprint.name}. Review the next build step, then move into the workspace when the implementation handoff opens.`
       );
     } catch (error) {
       setPlanningError(
@@ -1421,7 +1424,7 @@ export default function App() {
 
               setDashboardOpen(false);
               setSurfaceMode("brief");
-              setStatusMessage(`Opened lesson for ${activeStep.title}.`);
+              setStatusMessage(`Opened the guided step context for ${activeStep.title}.`);
             }}
             onOpenCode={() => {
               setDashboardOpen(false);
@@ -1456,7 +1459,7 @@ export default function App() {
 
               setDashboardOpen(false);
               setSurfaceMode("brief");
-              setStatusMessage(`Opened lesson for ${activeStep.title}.`);
+              setStatusMessage(`Opened the guided step context for ${activeStep.title}.`);
             }}
             onOpenCode={() => {
               setDashboardOpen(false);
@@ -2005,7 +2008,7 @@ function FloatingGuideCard({
           <div className="construct-floating-card-meta-copy">
             <span className="construct-floating-card-kicker">Guide</span>
             <span className="construct-floating-card-step">
-              Step {activeStepIndex + 1} / {blueprint?.steps.length ?? 0}
+              Step {activeStepIndex + 1} / {getRuntimeSteps(blueprint).length}
             </span>
           </div>
           <SecondaryButton
@@ -2302,7 +2305,7 @@ function AppSidebar({
               </Avatar>
               <div className="flex min-w-0 flex-col gap-1">
                 <span className="construct-app-brand-kicker">Construct</span>
-                <strong>{activeProjectName ?? "Teaching IDE"}</strong>
+                <strong>{activeProjectName ?? "Construction IDE"}</strong>
               </div>
             </div>
           </div>
@@ -2343,11 +2346,11 @@ function AppSidebar({
                     onClick={onOpenLesson}
                     isActive={currentView === "lesson"}
                     className="construct-app-nav-item"
-                    tooltip="Lesson"
+                    tooltip="Step context"
                     disabled={!activeStep}
                   >
                     <BookOpenTextIcon />
-                    <span>Lesson</span>
+                    <span>Step</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
@@ -2462,7 +2465,7 @@ function WorkbenchTopbar({
         </span>
         <strong>
           {currentView === "projects"
-            ? "Return to any saved project and keep learning."
+            ? "Return to any saved project and keep building."
             : activeFilePath ?? activeStepTitle ?? activeProjectName ?? "No file focused"}
         </strong>
       </div>
@@ -2489,7 +2492,7 @@ function WorkbenchTopbar({
             )}
             onClick={onOpenLesson}
           >
-            Learn
+            Step
           </Button>
           <Button
             type="button"
@@ -2739,13 +2742,13 @@ function ProjectsHome({
               <div className="construct-home-surface-header">
                 <div>
                   <span className="construct-home-section-kicker">Start</span>
-                  <h2>Create a new guided project.</h2>
+                  <h2>Create a new project.</h2>
                 </div>
               </div>
               <p className="construct-home-surface-copy">
                 Tell Construct what you want to build. The Architect will generate the
-                project, lessons, checks, hidden tests, and implementation path around
-                that goal.
+                project spine, the first build frontier, hidden tests, and the initial
+                implementation path around that goal.
               </p>
               <div className="construct-home-inline-note">
                 Once the first project is planned, its current step will appear here and
@@ -3062,15 +3065,15 @@ function PlanningOverlay({
       <section className="construct-planning-panel max-w-none gap-0 border border-border bg-background p-0 text-foreground shadow-2xl ring-1 ring-foreground/10 sm:max-w-[calc(100vw-24px)]">
         <div className="sr-only" aria-hidden="false">
           <h1>Create a new project</h1>
-          <p>Work with the Architect to tailor and generate a guided project workspace.</p>
+          <p>Work with the Architect to tailor and generate a real project workspace.</p>
         </div>
         <header className="construct-planning-header">
           <div className="construct-planning-header-copy">
             <span className="construct-brief-kicker">Architect</span>
             <h1>Create a new project.</h1>
             <p>
-              Describe the project once, then Construct will tailor the teaching path,
-              code tasks, and hidden tests around the learner.
+              Describe the project once, then Construct will build the project spine,
+              shape the first frontier, and prepare the hidden validations around the learner.
             </p>
           </div>
           <div className="construct-planning-header-actions">
@@ -3092,7 +3095,7 @@ function PlanningOverlay({
               <h2>Describe the project.</h2>
               <p>
                 Tell Construct what you want to build. The Architect will shape the
-                lessons, checks, implementation order, and hidden validation around this
+                next-step context, implementation order, and hidden validation around this
                 goal.
               </p>
               <FieldGroup>
@@ -3124,7 +3127,7 @@ function PlanningOverlay({
                 <div className="construct-planning-style-copy">
                   <span className="construct-panel-kicker">Learning style</span>
                   <p>
-                    This guides how much explanation should come before the learner starts
+                    This guides how much context should come before the learner starts
                     writing code in the real project.
                   </p>
                 </div>
@@ -3176,14 +3179,16 @@ function PlanningOverlay({
                 <span className="construct-panel-kicker">What the Architect will produce</span>
                 <div className="construct-tag-list">
                   <TagChip>project path</TagChip>
-                  <TagChip>lesson slides</TagChip>
+                  <TagChip>project spine</TagChip>
+                  <TagChip>adaptive frontier</TagChip>
                   <TagChip>concept checks</TagChip>
                   <TagChip>real code tasks</TagChip>
                   <TagChip>hidden tests</TagChip>
                 </div>
                 <p>
-                  Construct creates the project, writes the course, prepares hidden tests,
-                  and then hands the learner into the code workspace at the right step.
+                  Construct creates the project spine, prepares the first visible slice,
+                  wires hidden tests, and then hands the learner into the workspace at the
+                  right step.
                 </p>
               </section>
 
@@ -3213,7 +3218,7 @@ function PlanningOverlay({
               <h2 className="construct-modal-underlay-title">{planningGoal.trim()}</h2>
               <p>
                 Construct has finished the first pass and is now tailoring the project
-                path, lesson depth, and hidden tests before it materializes the real
+                path, step depth, and hidden tests before it materializes the real
                 workspace.
               </p>
               <div className="construct-tag-list">
@@ -3227,7 +3232,7 @@ function PlanningOverlay({
               </div>
               {planningBusy ? (
                 <p className="construct-muted-copy">
-                  The Architect is generating the project path, course flow, codebase, and
+                  The Architect is generating the project spine, frontier, codebase, and
                   hidden tests now. This screen stays visible so you can follow the live
                   activity without the UI looking paused.
                 </p>
@@ -3619,8 +3624,8 @@ function BriefOverlay({
   deepDiveError: string;
 }) {
   const lessonSlides = getRenderableLessonSlides(activeStep);
-  const courseSteps = blueprint?.steps ?? [activeStep];
-  const totalCourseMinutes = courseSteps.reduce(
+  const buildPathSteps = blueprint ? getRuntimeSteps(blueprint) : [activeStep];
+  const totalCourseMinutes = buildPathSteps.reduce(
     (total, step) => total + step.estimatedMinutes,
     0
   );
@@ -3690,15 +3695,15 @@ function BriefOverlay({
   const courseOutline = (
     <aside className="construct-course-outline construct-course-outline--persistent">
       <div className="construct-course-outline-header">
-        <span className="construct-panel-kicker">Learning path</span>
+        <span className="construct-panel-kicker">Build path</span>
         <p className="construct-course-outline-copy">
-          Construct keeps the project on track here, then deepens or adjusts the path when
-          the learner struggles on checks or implementation.
+          Construct keeps the project coherent here, then deepens or adjusts the frontier
+          when the learner gets blocked in checks or implementation.
         </p>
       </div>
 
       <div className="construct-step-list">
-        {courseSteps.map((step, index) => {
+        {buildPathSteps.map((step, index) => {
           const isActive = step.id === activeStep.id;
 
           return (
@@ -3742,12 +3747,12 @@ function BriefOverlay({
         <div className="construct-course-shell">
           <header className="construct-course-topbar">
             <div className="construct-course-topbar-copy">
-              <span className="construct-brief-kicker">Construct course</span>
-              <strong>{blueprint?.name ?? "Generated course"}</strong>
+              <span className="construct-brief-kicker">Construct project</span>
+              <strong>{blueprint?.name ?? "Generated project"}</strong>
             </div>
             <div className="construct-course-topbar-actions">
               <ToolbarPill variant="outline" className="construct-brief-chip">
-                Step {activeStepIndex + 1} / {courseSteps.length}
+                Step {activeStepIndex + 1} / {buildPathSteps.length}
               </ToolbarPill>
               <ToolbarPill variant="outline" className="construct-brief-chip">
                 {totalCourseMinutes} min total
@@ -3769,30 +3774,30 @@ function BriefOverlay({
 
               <div className="construct-course-cover-main construct-course-cover-main--hero">
                 <div className="construct-course-cover-copy">
-                  <span className="construct-brief-kicker">Course cover</span>
+                  <span className="construct-brief-kicker">Project spine</span>
                   <h1>{blueprint?.name ?? activeStep.title}</h1>
                   <p>{blueprint?.description ?? activeStep.summary}</p>
                 </div>
 
                 <div className="construct-course-cover-grid">
                   <InfoPanel
-                    title="Current lesson"
+                    title="Current step"
                     body={`## ${activeStep.title}\n\n${activeStep.summary}`}
                     markdown
                   />
                   <InfoPanel
                     title="How this works"
                     body={[
-                      "## Learn, confirm, implement",
+                      "## Understand, verify, implement",
                       "",
-                      "- Construct teaches the concept in full-page lesson slides first.",
-                      "- Then it checks understanding before unlocking the coding exercise.",
-                      "- Only after the concept is clear do you enter the real code workspace.",
-                      "- If you struggle, Construct can expand the lesson and insert deeper teaching."
+                      "- Construct explains the next capability in context before you touch code.",
+                      "- It checks understanding before unlocking the implementation handoff.",
+                      "- You then move into the real workspace and edit the actual project files.",
+                      "- If you struggle, Construct can deepen the explanation and update the next path."
                     ].join("\n")}
                     markdown
                   />
-                  <MetadataList title="Concepts in this lesson" values={activeStep.concepts} />
+                  <MetadataList title="Concepts in this step" values={activeStep.concepts} />
                   <MetadataList title="What the hidden checks will verify" values={activeStep.tests} />
                 </div>
 
@@ -3803,12 +3808,11 @@ function BriefOverlay({
                       setPhase("lesson");
                     }}
                   >
-                    {activeStepIndex === 0 ? "Start course" : "Resume lesson"}
+                    {activeStepIndex === 0 ? "Start build path" : "Resume step context"}
                   </PrimaryButton>
                   <p className="construct-muted-copy">
-                    You will stay in lesson mode until the concept is explained and the
-                    checks are complete. The code editor opens only when the exercise handoff
-                    begins.
+                    You stay in guided step mode until the context is clear and the checks are
+                    complete. The code editor opens when the implementation handoff begins.
                   </p>
                 </div>
               </div>
@@ -3822,7 +3826,7 @@ function BriefOverlay({
               <section className="construct-course-stage">
                 <header className="construct-course-stage-meta">
                   <div className="construct-course-stage-meta-copy">
-                    <span className="construct-brief-kicker">Lesson</span>
+                    <span className="construct-brief-kicker">Step context</span>
                     <strong>{activeStep.title}</strong>
                   </div>
                   <div className="construct-brief-header-meta">
@@ -3911,7 +3915,7 @@ function BriefOverlay({
                               setActiveSlideIndex(0);
                             }}
                           >
-                            Review lesson again
+                            Review step context again
                           </SecondaryButton>
 
                           {activeCheckAttempts >= 2 ? (
@@ -3924,7 +3928,7 @@ function BriefOverlay({
                                 {deepDiveBusy ? (
                                   <>
                                     <Spinner data-icon="inline-start" />
-                                    Building a deeper lesson...
+                                    Updating the path...
                                   </>
                                 ) : (
                                   "Need a deeper explanation?"
@@ -3948,7 +3952,7 @@ function BriefOverlay({
                   ) : (
                     <EmptyPanel
                       title="No concept check required"
-                      description="This lesson flows directly into the exercise handoff."
+                      description="This step flows directly into the implementation handoff."
                     />
                   )}
                 </article>
@@ -3961,7 +3965,7 @@ function BriefOverlay({
                       setActiveSlideIndex(Math.max(lessonSlides.length - 1, 0));
                     }}
                   >
-                    Back to lesson
+                    Back to step context
                   </SecondaryButton>
                   <PrimaryButton
                     type="button"
@@ -3991,7 +3995,7 @@ function BriefOverlay({
                     <strong>{activeStep.title}</strong>
                     <p>
                       You have the concept. Now Construct will open the exact file and anchor
-                      where this lesson turns into implementation work.
+                      where this step turns into implementation work.
                     </p>
                   </div>
                   <div className="construct-brief-header-meta">
@@ -4039,7 +4043,7 @@ function BriefOverlay({
                       setActiveSlideIndex(Math.max(lessonSlides.length - 1, 0));
                     }}
                   >
-                    Back to lesson flow
+                    Back to step flow
                   </SecondaryButton>
                   <PrimaryButton type="button" onClick={onApply} disabled={!canApplyStep}>
                     Open workspace and start coding
@@ -4055,15 +4059,25 @@ function BriefOverlay({
 }
 
 function getRenderableLessonSlides(step: BlueprintStep): string[] {
-  if (step.lessonSlides.length === 0) {
+  const slideDeck = step.explanationSlides.length > 0 ? step.explanationSlides : step.lessonSlides;
+
+  if (slideDeck.length === 0) {
     return [step.doc];
   }
 
-  const slides = step.lessonSlides
+  const slides = slideDeck
     .map((slide) => normalizeLessonSlideToMarkdown(slide))
     .filter((slide) => slide.trim().length > 0);
 
   return slides.length > 0 ? slides : [step.doc];
+}
+
+function getRuntimeSteps(blueprint: ProjectBlueprint | null): BlueprintStep[] {
+  if (!blueprint) {
+    return [];
+  }
+
+  return blueprint.frontier?.steps.length ? blueprint.frontier.steps : blueprint.steps;
 }
 
 function normalizeLessonSlideToMarkdown(slide: string | LessonSlide): string {

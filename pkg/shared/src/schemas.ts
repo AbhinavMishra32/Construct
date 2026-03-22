@@ -92,12 +92,132 @@ export const CheckReviewResponseSchema = z.object({
   review: CheckReviewSchema
 });
 
+export const ProjectPreviewKindSchema = z.enum([
+  "cli",
+  "api",
+  "ui",
+  "trace",
+  "graph",
+  "state"
+]);
+
+export const ProjectPreviewSchema = z.object({
+  kind: ProjectPreviewKindSchema,
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  command: z.string().min(1).nullable().default(null),
+  entrypoint: z.string().min(1).nullable().default(null),
+  sampleOutput: z.string().min(1).nullable().default(null)
+});
+
+export const MaskedRegionSchema = z.object({
+  anchor: AnchorSchema,
+  strategy: z.enum(["todo-stub", "placeholder-return", "hidden-region"]),
+  intent: z.string().min(1),
+  learnerVisible: z.boolean().default(true)
+});
+
+export const StableCapabilitySchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  rationale: z.string().min(1),
+  dependsOn: z.array(z.string().min(1)).default([]),
+  concepts: z.array(z.string().min(1)).default([]),
+  visibleOutcome: z.string().min(1)
+});
+
+export const StableMilestoneSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  visibleOutcome: z.string().min(1),
+  capabilityIds: z.array(z.string().min(1)).min(1),
+  preview: ProjectPreviewSchema.nullable().default(null)
+});
+
+export const StableCommitSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  commitMessage: z.string().min(1),
+  capabilityIds: z.array(z.string().min(1)).default([]),
+  milestoneId: z.string().min(1).nullable().default(null),
+  dependsOn: z.array(z.string().min(1)).default([]),
+  visibleFiles: z.array(z.string().min(1)).default([]),
+  maskedRegions: z.array(MaskedRegionSchema).default([]),
+  visibleOutcome: z.string().min(1),
+  runnable: z.boolean().default(true),
+  preview: ProjectPreviewSchema.nullable().default(null)
+});
+
+export const RecommendedBuildRouteSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  rationale: z.string().min(1),
+  commitIds: z.array(z.string().min(1)).min(1),
+  capabilityIds: z.array(z.string().min(1)).default([]),
+  personalizedFor: z.array(z.string().min(1)).default([])
+});
+
+export const ProjectSpineSchema = z.object({
+  finalEntrypoints: z.array(z.string().min(1)).min(1),
+  capabilities: z.array(StableCapabilitySchema).min(1),
+  milestones: z.array(StableMilestoneSchema).min(1),
+  commitGraph: z.array(StableCommitSchema).min(1),
+  routes: z.array(RecommendedBuildRouteSchema).min(1),
+  activeRouteId: z.string().min(1).nullable().default(null),
+  activeCommitId: z.string().min(1).nullable().default(null),
+  alwaysVisibleFiles: z.array(z.string().min(1)).default([])
+});
+
+export const DiagnosticSignalSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum([
+    "check-answer",
+    "submission-result",
+    "repeat-failure",
+    "hint-usage",
+    "runtime-question",
+    "inactivity",
+    "rewrite-gate",
+    "debug-trace"
+  ]),
+  summary: z.string().min(1),
+  evidence: z.string().min(1),
+  conceptIds: z.array(z.string().min(1)).default([]),
+  recordedAt: z.string().datetime()
+});
+
+export const MentorInterventionSchema = z.object({
+  kind: z.enum([
+    "continue-to-code",
+    "deepen-explanation",
+    "targeted-check",
+    "diagnostic-question",
+    "micro-practice",
+    "split-step",
+    "insert-prerequisite",
+    "mutate-frontier",
+    "return-to-code"
+  ]),
+  summary: z.string().min(1),
+  reason: z.string().min(1)
+});
+
 export const BlueprintStepSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   summary: z.string().min(1),
   doc: z.string().min(1),
+  capabilityId: z.string().min(1).nullable().default(null),
+  milestoneId: z.string().min(1).nullable().default(null),
+  commitId: z.string().min(1).nullable().default(null),
   lessonSlides: z
+    .array(z.union([LessonSlideSchema, LegacyLessonSlideSchema]))
+    .default([]),
+  explanationSlides: z
     .array(z.union([LessonSlideSchema, LegacyLessonSlideSchema]))
     .default([]),
   anchor: AnchorSchema,
@@ -105,6 +225,9 @@ export const BlueprintStepSchema = z.object({
   concepts: z.array(z.string().min(1)).min(1),
   constraints: z.array(z.string().min(1)).default([]),
   checks: z.array(ComprehensionCheckSchema).default([]),
+  visibleFiles: z.array(z.string().min(1)).default([]),
+  maskedRegions: z.array(MaskedRegionSchema).default([]),
+  preview: ProjectPreviewSchema.nullable().default(null),
   estimatedMinutes: z.number().int().positive(),
   difficulty: z.enum(["intro", "core", "advanced"])
 });
@@ -126,7 +249,19 @@ export const DependencyGraphSchema = z.object({
   edges: z.array(DependencyEdgeSchema)
 });
 
-export const ProjectBlueprintSchema = z.object({
+export const AdaptiveFrontierSchema = z.object({
+  generatedAt: z.string().datetime(),
+  summary: z.string().min(1),
+  activeStepId: z.string().min(1).nullable().default(null),
+  activeCommitId: z.string().min(1).nullable().default(null),
+  stepIds: z.array(z.string().min(1)).min(1).max(3),
+  steps: z.array(BlueprintStepSchema).min(1).max(3),
+  diagnostics: z.array(DiagnosticSignalSchema).default([]),
+  intervention: MentorInterventionSchema.nullable().default(null),
+  updating: z.boolean().default(false)
+});
+
+const ProjectBlueprintBaseSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   version: z.string().min(1),
@@ -137,6 +272,8 @@ export const ProjectBlueprintSchema = z.object({
   entrypoints: z.array(z.string().min(1)).min(1),
   files: z.record(z.string().min(1)),
   steps: z.array(BlueprintStepSchema).min(1),
+  spine: ProjectSpineSchema.nullable().default(null),
+  frontier: AdaptiveFrontierSchema.nullable().default(null),
   dependencyGraph: DependencyGraphSchema,
   metadata: z.object({
     createdBy: z.string().min(1),
@@ -144,6 +281,46 @@ export const ProjectBlueprintSchema = z.object({
     targetLanguage: z.string().min(1),
     tags: z.array(z.string().min(1)).default([])
   })
+});
+
+export const ProjectBlueprintSchema = ProjectBlueprintBaseSchema.transform((blueprint) => {
+  const explanationNormalizedSteps = blueprint.steps.map((step) => {
+    const explanationSlides =
+      step.explanationSlides.length > 0 ? step.explanationSlides : step.lessonSlides;
+    const lessonSlides =
+      step.lessonSlides.length > 0 ? step.lessonSlides : step.explanationSlides;
+
+    return {
+      ...step,
+      lessonSlides,
+      explanationSlides
+    };
+  });
+
+  const normalizedFrontier =
+    blueprint.frontier === null
+      ? null
+      : {
+          ...blueprint.frontier,
+          steps: blueprint.frontier.steps.map((step) => {
+            const explanationSlides =
+              step.explanationSlides.length > 0 ? step.explanationSlides : step.lessonSlides;
+            const lessonSlides =
+              step.lessonSlides.length > 0 ? step.lessonSlides : step.explanationSlides;
+
+            return {
+              ...step,
+              lessonSlides,
+              explanationSlides
+            };
+          })
+        };
+
+  return {
+    ...blueprint,
+    steps: explanationNormalizedSteps,
+    frontier: normalizedFrontier
+  };
 });
 
 export const ProjectStatusSchema = z.enum([
@@ -348,6 +525,61 @@ export const PlanMutationSchema = z.object({
   recordedAt: z.string().datetime()
 });
 
+export function getBlueprintRuntimeSteps(
+  blueprint: Pick<ProjectBlueprint, "steps" | "frontier">
+): BlueprintStep[] {
+  if (blueprint.frontier?.steps.length) {
+    return blueprint.frontier.steps;
+  }
+
+  return blueprint.steps;
+}
+
+export function getBlueprintStepDeck(step: Pick<BlueprintStep, "explanationSlides" | "lessonSlides">): Array<
+  z.infer<typeof LessonSlideSchema> | string
+> {
+  return step.explanationSlides.length > 0 ? step.explanationSlides : step.lessonSlides;
+}
+
+export function getBlueprintVisibleFilePaths(
+  blueprint: Pick<ProjectBlueprint, "entrypoints" | "files" | "steps" | "frontier" | "spine">
+): string[] {
+  const visiblePaths = new Set<string>();
+
+  for (const entrypoint of blueprint.entrypoints) {
+    visiblePaths.add(normalizeBlueprintPath(entrypoint));
+  }
+
+  for (const relativePath of blueprint.spine?.alwaysVisibleFiles ?? []) {
+    visiblePaths.add(normalizeBlueprintPath(relativePath));
+  }
+
+  const activeCommitId = blueprint.frontier?.activeCommitId ?? blueprint.spine?.activeCommitId;
+  const activeCommit = activeCommitId
+    ? blueprint.spine?.commitGraph.find((commit) => commit.id === activeCommitId) ?? null
+    : null;
+
+  for (const relativePath of activeCommit?.visibleFiles ?? []) {
+    visiblePaths.add(normalizeBlueprintPath(relativePath));
+  }
+
+  for (const step of getBlueprintRuntimeSteps(blueprint)) {
+    visiblePaths.add(normalizeBlueprintPath(step.anchor.file));
+
+    for (const relativePath of step.visibleFiles) {
+      visiblePaths.add(normalizeBlueprintPath(relativePath));
+    }
+  }
+
+  if (visiblePaths.size === 0) {
+    for (const relativePath of Object.keys(blueprint.files)) {
+      visiblePaths.add(normalizeBlueprintPath(relativePath));
+    }
+  }
+
+  return Array.from(visiblePaths).filter(Boolean).sort();
+}
+
 export type AnchorRef = z.infer<typeof AnchorSchema>;
 export type WorkspaceFileEntry = z.infer<typeof WorkspaceFileEntrySchema>;
 export type ComprehensionCheck = z.infer<typeof ComprehensionCheckSchema>;
@@ -356,7 +588,18 @@ export type LessonSlide = z.infer<typeof LessonSlideSchema>;
 export type CheckReview = z.infer<typeof CheckReviewSchema>;
 export type CheckReviewRequest = z.infer<typeof CheckReviewRequestSchema>;
 export type CheckReviewResponse = z.infer<typeof CheckReviewResponseSchema>;
+export type ProjectPreviewKind = z.infer<typeof ProjectPreviewKindSchema>;
+export type ProjectPreview = z.infer<typeof ProjectPreviewSchema>;
+export type MaskedRegion = z.infer<typeof MaskedRegionSchema>;
+export type StableCapability = z.infer<typeof StableCapabilitySchema>;
+export type StableMilestone = z.infer<typeof StableMilestoneSchema>;
+export type StableCommit = z.infer<typeof StableCommitSchema>;
+export type RecommendedBuildRoute = z.infer<typeof RecommendedBuildRouteSchema>;
+export type ProjectSpine = z.infer<typeof ProjectSpineSchema>;
+export type DiagnosticSignal = z.infer<typeof DiagnosticSignalSchema>;
+export type MentorIntervention = z.infer<typeof MentorInterventionSchema>;
 export type BlueprintStep = z.infer<typeof BlueprintStepSchema>;
+export type AdaptiveFrontier = z.infer<typeof AdaptiveFrontierSchema>;
 export type ProjectBlueprint = z.infer<typeof ProjectBlueprintSchema>;
 export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
 export type ProjectAttemptStatus = z.infer<typeof ProjectAttemptStatusSchema>;
@@ -383,3 +626,7 @@ export type TaskStartResponse = z.infer<typeof TaskStartResponseSchema>;
 export type TaskSubmitRequest = z.infer<typeof TaskSubmitRequestSchema>;
 export type TaskSubmitResponse = z.infer<typeof TaskSubmitResponseSchema>;
 export type PlanMutation = z.infer<typeof PlanMutationSchema>;
+
+function normalizeBlueprintPath(relativePath: string): string {
+  return relativePath.replaceAll("\\", "/").replace(/^\.\/+/, "").trim();
+}

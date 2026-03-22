@@ -599,9 +599,17 @@ test("ConstructAgentService creates question and plan jobs and persists the resu
     ) as {
       files: Record<string, string>;
       steps: Array<{ id: string }>;
+      spine: { commitGraph: Array<{ id: string }> } | null;
+      frontier: { steps: Array<{ id: string }>; activeStepId: string | null } | null;
     };
     assert.ok(generatedBlueprint.files["src/lexer.ts"]);
     assert.equal(generatedBlueprint.steps[0]?.id, "step.lexer-tokenize");
+    assert.equal(
+      generatedBlueprint.spine?.commitGraph[0]?.id,
+      "commit.step-skill-rust-ownership"
+    );
+    assert.equal(generatedBlueprint.frontier?.steps[0]?.id, "step.lexer-tokenize");
+    assert.equal(generatedBlueprint.frontier?.activeStepId, "step.lexer-tokenize");
 
     const activeBlueprintState = JSON.parse(
       await readFile(path.join(root, ".construct", "state", "active-blueprint.json"), "utf8")
@@ -1722,7 +1730,7 @@ async function waitForJobCompletion(
   service: ConstructAgentService,
   jobId: string
 ) {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
     const snapshot = service.getJob(jobId);
 
     if (snapshot.status === "completed") {
@@ -1734,7 +1742,7 @@ async function waitForJobCompletion(
     }
 
     await new Promise((resolve) => {
-      setTimeout(resolve, 10);
+      setTimeout(resolve, 20);
     });
   }
 

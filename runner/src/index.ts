@@ -9,6 +9,7 @@ import {
   BlueprintTaskRequestSchema,
   CheckReviewRequestSchema,
   CheckReviewResponseSchema,
+  getBlueprintVisibleFilePaths,
   LearnerProfileResponseSchema,
   ProjectCurrentStepRequestSchema,
   ProjectSelectionRequestSchema,
@@ -83,7 +84,8 @@ async function createWorkspaceContext(
   const preparedWorkspace = await prepareLearnerWorkspace(canonicalBlueprintPath);
   const workspaceFileManager = new WorkspaceFileManager(preparedWorkspace.learnerWorkspaceRoot, {
     ignoredDirectories: ["test-fixtures", "tests", "__tests__"],
-    ignoredFiles: ["project-blueprint.json"]
+    ignoredFiles: ["project-blueprint.json"],
+    visibleFiles: getBlueprintVisibleFilePaths(preparedWorkspace.blueprint)
   });
   const snapshotService = new SnapshotService(preparedWorkspace.learnerWorkspaceRoot);
   const taskLifecycle = new TaskLifecycleService(preparedWorkspace.learnerWorkspaceRoot, {

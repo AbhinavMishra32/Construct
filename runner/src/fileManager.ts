@@ -31,6 +31,8 @@ export class WorkspaceFileManager {
   private readonly workspaceRoot: string;
   private readonly ignoredDirectories: Set<string>;
   private readonly ignoredFiles: Set<string>;
+  private readonly visibleFiles: Set<string> | null;
+  private readonly visibleDirectories: Set<string>;
   private readonly workspaceRealRootPromise: Promise<string>;
 
   constructor(
@@ -38,6 +40,7 @@ export class WorkspaceFileManager {
     options?: {
       ignoredDirectories?: string[];
       ignoredFiles?: string[];
+      visibleFiles?: string[];
     }
   ) {
     this.workspaceRoot = path.resolve(workspaceRoot);
@@ -46,10 +49,18 @@ export class WorkspaceFileManager {
       ...(options?.ignoredDirectories ?? [])
     ]);
     this.ignoredFiles = new Set(options?.ignoredFiles ?? []);
+    this.visibleFiles =
+      options?.visibleFiles && options.visibleFiles.length > 0
+        ? new Set(
+            options.visibleFiles.map((relativePath) => normalizeWorkspaceRelativePath(relativePath))
+          )
+        : null;
+    this.visibleDirectories = buildVisibleDirectorySet(this.visibleFiles);
     this.workspaceRealRootPromise = realpath(this.workspaceRoot);
   }
 
   async readFile(relativePath: string): Promise<string> {
+    this.assertFileVisible(relativePath);
     const targetPath = await this.resolveExistingPath(relativePath);
     const targetStats = await stat(targetPath);
 
@@ -61,18 +72,24 @@ export class WorkspaceFileManager {
   }
 
   async writeFile(relativePath: string, contents: string): Promise<void> {
+    this.assertFileVisible(relativePath);
     const targetPath = await this.resolveWritePath(relativePath);
     await mkdir(path.dirname(targetPath), { recursive: true });
     await writeFileToDisk(targetPath, contents, "utf8");
   }
 
   async createFile(relativePath: string, contents = ""): Promise<void> {
+    this.assertFileVisible(relativePath);
     const targetPath = await this.resolveWritePath(relativePath);
     await mkdir(path.dirname(targetPath), { recursive: true });
     await writeFileToDisk(targetPath, contents, { encoding: "utf8", flag: "wx" });
   }
 
   async exists(relativePath: string): Promise<boolean> {
+    if (!this.isFileVisible(relativePath)) {
+      return false;
+    }
+
     try {
       await this.resolveExistingPath(relativePath);
       return true;
@@ -112,6 +129,10 @@ export class WorkspaceFileManager {
         );
 
         if (directoryEntry.isDirectory()) {
+          if (!this.isDirectoryVisible(relativeEntryPath)) {
+            continue;
+          }
+
           entries.push({
             path: relativeEntryPath,
             kind: "directory",
@@ -122,6 +143,10 @@ export class WorkspaceFileManager {
         }
 
         if (directoryEntry.isFile()) {
+          if (!this.isFileVisible(relativeEntryPath)) {
+            continue;
+          }
+
           const entryStats = await stat(absolutePath);
           entries.push({
             path: relativeEntryPath,
@@ -195,7 +220,7 @@ export class WorkspaceFileManager {
   }
 
   private normalizeRelativePath(relativePath: string): string {
-    const normalizedPath = relativePath.replaceAll("\\", "/").replace(/^\.\/+/, "").trim();
+    const normalizedPath = normalizeWorkspaceRelativePath(relativePath);
 
     if (!normalizedPath || normalizedPath === ".") {
       throw new WorkspacePathError("A relative workspace path is required.");
@@ -226,6 +251,30 @@ export class WorkspaceFileManager {
   private toWorkspacePath(relativePath: string): string {
     return relativePath.split(path.sep).join("/");
   }
+
+  private assertFileVisible(relativePath: string): void {
+    if (this.isFileVisible(relativePath)) {
+      return;
+    }
+
+    throw new WorkspacePathError(`${relativePath} is not visible in the current project slice.`);
+  }
+
+  private isFileVisible(relativePath: string): boolean {
+    if (!this.visibleFiles) {
+      return true;
+    }
+
+    return this.visibleFiles.has(normalizeWorkspaceRelativePath(relativePath));
+  }
+
+  private isDirectoryVisible(relativePath: string): boolean {
+    if (!this.visibleFiles) {
+      return true;
+    }
+
+    return this.visibleDirectories.has(normalizeWorkspaceRelativePath(relativePath));
+  }
 }
 
 function isMissingPathError(error: unknown): boolean {
@@ -235,4 +284,25 @@ function isMissingPathError(error: unknown): boolean {
     "code" in error &&
     (error as { code?: string }).code === "ENOENT"
   );
+}
+
+function normalizeWorkspaceRelativePath(relativePath: string): string {
+  return relativePath.replaceAll("\\", "/").replace(/^\.\/+/, "").trim();
+}
+
+function buildVisibleDirectorySet(visibleFiles: Set<string> | null): Set<string> {
+  const directories = new Set<string>();
+
+  if (!visibleFiles) {
+    return directories;
+  }
+
+  for (const relativePath of visibleFiles) {
+    const parts = relativePath.split("/").filter(Boolean);
+    for (let index = 1; index < parts.length; index += 1) {
+      directories.add(parts.slice(0, index).join("/"));
+    }
+  }
+
+  return directories;
 }

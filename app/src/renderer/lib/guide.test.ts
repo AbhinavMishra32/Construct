@@ -40,6 +40,12 @@ const blueprintStep: BlueprintStep = {
   lessonSlides: [
     "## Execution model\n\n- Start at the graph entry node.\n- Run each node in order.\n- Stop when there is no next node."
   ],
+  explanationSlides: [
+    "## Execution model\n\n- Start at the graph entry node.\n- Run each node in order.\n- Stop when there is no next node."
+  ],
+  capabilityId: "capability.runner-loop",
+  milestoneId: "milestone.runner-loop",
+  commitId: "commit.runner-loop",
   anchor: {
     file: "src/runner.ts",
     marker: "TASK:runner-loop"
@@ -48,6 +54,8 @@ const blueprintStep: BlueprintStep = {
   concepts: ["async control flow", "runtime orchestration"],
   constraints: ["Track visit order.", "Stop when there is no next node."],
   checks: [mcqCheck],
+  visibleFiles: ["src/runner.ts"],
+  preview: null,
   estimatedMinutes: 15,
   difficulty: "core"
 };

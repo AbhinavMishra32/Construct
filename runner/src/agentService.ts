@@ -34,6 +34,7 @@ import {
   ProjectsDashboardResponseSchema,
   RuntimeGuideRequestSchema,
   RuntimeGuideResponseSchema,
+  getBlueprintRuntimeSteps,
   type AgentEvent,
   type AgentJobCreatedResponse,
   type AgentJobKind,
@@ -633,8 +634,9 @@ export class ConstructAgentService {
     stepId: string
   ): Promise<void> {
     const blueprint = await loadBlueprint(canonicalBlueprintPath);
-    const stepIndex = blueprint.steps.findIndex((step) => step.id === stepId);
-    const step = stepIndex >= 0 ? blueprint.steps[stepIndex] : null;
+    const runtimeSteps = getBlueprintRuntimeSteps(blueprint);
+    const stepIndex = runtimeSteps.findIndex((step) => step.id === stepId);
+    const step = stepIndex >= 0 ? runtimeSteps[stepIndex] : null;
 
     if (!step) {
       return;
@@ -645,7 +647,7 @@ export class ConstructAgentService {
       stepId: step.id,
       stepTitle: step.title,
       stepIndex,
-      totalSteps: blueprint.steps.length
+      totalSteps: blueprint.spine?.commitGraph.length ?? runtimeSteps.length
     });
   }
 
@@ -657,8 +659,9 @@ export class ConstructAgentService {
     telemetry?: TaskTelemetry | null;
   }): Promise<void> {
     const blueprint = await loadBlueprint(input.canonicalBlueprintPath);
-    const stepIndex = blueprint.steps.findIndex((step) => step.id === input.stepId);
-    const step = stepIndex >= 0 ? blueprint.steps[stepIndex] : null;
+    const runtimeSteps = getBlueprintRuntimeSteps(blueprint);
+    const stepIndex = runtimeSteps.findIndex((step) => step.id === input.stepId);
+    const step = stepIndex >= 0 ? runtimeSteps[stepIndex] : null;
 
     if (!step) {
       return;
@@ -669,7 +672,7 @@ export class ConstructAgentService {
       stepId: step.id,
       stepTitle: step.title,
       stepIndex,
-      totalSteps: blueprint.steps.length,
+      totalSteps: blueprint.spine?.commitGraph.length ?? runtimeSteps.length,
       markStepCompleted: input.markStepCompleted,
       lastAttemptStatus: input.lastAttemptStatus ?? null
     });
@@ -3209,6 +3212,23 @@ export class ConstructAgentService {
       }
     );
 
+    const generatedAt = this.now().toISOString();
+    const normalizedSteps = annotateGeneratedBlueprintSteps({
+      steps: normalizeGeneratedBlueprintSteps(draft.steps),
+      draft,
+      plan
+    });
+    const spine = buildStableSpine({
+      plan,
+      draft
+    });
+    const frontier = buildAdaptiveFrontier({
+      steps: normalizedSteps,
+      plan,
+      spine,
+      generatedAt
+    });
+
     const blueprint: ProjectBlueprint = ProjectBlueprintSchema.parse({
       id: `construct.generated.${session.sessionId}.${projectSlug}`,
       name: draft.projectName,
@@ -3219,11 +3239,13 @@ export class ConstructAgentService {
       language: draft.language,
       entrypoints: draft.entrypoints,
       files: learnerFiles,
-      steps: normalizeGeneratedBlueprintSteps(draft.steps),
+      steps: normalizedSteps,
+      spine,
+      frontier,
       dependencyGraph: draft.dependencyGraph,
       metadata: {
         createdBy: "Construct Architect agent",
-        createdAt: this.now().toISOString(),
+        createdAt: generatedAt,
         targetLanguage: draft.language,
         tags: Array.from(new Set([
           ...draft.tags,
@@ -3233,7 +3255,7 @@ export class ConstructAgentService {
         ]))
       }
     });
-    const timestamp = this.now().toISOString();
+    const timestamp = generatedAt;
     await this.mutateBlueprintBuildForJob(jobId, (current) => ({
       ...(current ??
         createBlueprintBuildRecord({
@@ -4931,6 +4953,210 @@ function normalizeGeneratedBlueprintSteps(
   );
 }
 
+function annotateGeneratedBlueprintSteps(input: {
+  steps: ProjectBlueprint["steps"];
+  draft: GeneratedBlueprintBundleDraft;
+  plan: GeneratedProjectPlan;
+}): ProjectBlueprint["steps"] {
+  const draftStepMap = new Map(input.draft.steps.map((step) => [step.id, step] as const));
+
+  return input.steps.map((step, index) => {
+    const plannedStep = input.plan.steps.find((candidate) => candidate.id === step.id)
+      ?? input.plan.steps[index]
+      ?? null;
+    const draftStep = draftStepMap.get(step.id) ?? null;
+    const commitId = plannedStep ? toStableCommitId(plannedStep.id) : null;
+    const milestoneId = plannedStep ? toStableMilestoneId(plannedStep.id) : null;
+    const visibleFiles = uniquePaths([
+      step.anchor.file,
+      ...(plannedStep?.suggestedFiles ?? []),
+      ...(draftStep ? [draftStep.anchor.file] : [])
+    ]);
+
+    return BlueprintStepSchema.parse({
+      ...step,
+      capabilityId: plannedStep?.id ?? null,
+      milestoneId,
+      commitId,
+      explanationSlides: step.explanationSlides.length > 0 ? step.explanationSlides : step.lessonSlides,
+      lessonSlides: step.lessonSlides.length > 0 ? step.lessonSlides : step.explanationSlides,
+      visibleFiles,
+      maskedRegions: [
+        {
+          anchor: step.anchor,
+          strategy: "todo-stub",
+          intent: step.summary,
+          learnerVisible: true
+        }
+      ],
+      preview: buildProjectPreview(step.title, plannedStep?.validationFocus?.[0] ?? step.summary, input.draft.entrypoints[0] ?? null)
+    });
+  });
+}
+
+function buildStableSpine(input: {
+  plan: GeneratedProjectPlan;
+  draft: GeneratedBlueprintBundleDraft;
+}): NonNullable<ProjectBlueprint["spine"]> {
+  const draftStepMap = new Map(input.draft.steps.map((step) => [step.id, step] as const));
+  const capabilityIds = input.plan.steps.map((step) => step.id);
+  const milestoneSteps =
+    input.plan.steps.filter((step) => step.kind === "implementation").length > 0
+      ? input.plan.steps.filter((step) => step.kind === "implementation")
+      : input.plan.steps;
+
+  return {
+    finalEntrypoints: input.draft.entrypoints,
+    capabilities: input.plan.steps.map((step) => ({
+      id: step.id,
+      title: step.title,
+      summary: step.objective,
+      rationale: step.rationale,
+      dependsOn: step.dependsOn,
+      concepts: step.concepts,
+      visibleOutcome: step.validationFocus[0] ?? step.objective
+    })),
+    milestones: milestoneSteps.map((step) => ({
+      id: toStableMilestoneId(step.id),
+      title: step.title,
+      summary: step.objective,
+      visibleOutcome: step.validationFocus[0] ?? step.objective,
+      capabilityIds: [step.id],
+      preview: buildProjectPreview(step.title, step.validationFocus[0] ?? step.objective, input.draft.entrypoints[0] ?? null)
+    })),
+    commitGraph: input.plan.steps.map((step) => {
+      const draftStep = draftStepMap.get(step.id) ?? null;
+
+      return {
+        id: toStableCommitId(step.id),
+        title: step.title,
+        summary: step.objective,
+        commitMessage: `feat: ${step.title}`,
+        capabilityIds: [step.id],
+        milestoneId: milestoneSteps.some((candidate) => candidate.id === step.id)
+          ? toStableMilestoneId(step.id)
+          : null,
+        dependsOn: step.dependsOn.map(toStableCommitId),
+        visibleFiles: uniquePaths([
+          ...(step.suggestedFiles ?? []),
+          ...(draftStep ? [draftStep.anchor.file] : [])
+        ]),
+        maskedRegions: draftStep
+          ? [
+              {
+                anchor: {
+                  file: draftStep.anchor.file,
+                  marker: draftStep.anchor.marker,
+                  ...(draftStep.anchor.startLine === null
+                    ? {}
+                    : { startLine: draftStep.anchor.startLine }),
+                  ...(draftStep.anchor.endLine === null
+                    ? {}
+                    : { endLine: draftStep.anchor.endLine })
+                },
+                strategy: "todo-stub" as const,
+                intent: draftStep.summary,
+                learnerVisible: true
+              }
+            ]
+          : [],
+        visibleOutcome: step.validationFocus[0] ?? step.objective,
+        runnable: true,
+        preview: buildProjectPreview(step.title, step.validationFocus[0] ?? step.objective, input.draft.entrypoints[0] ?? null)
+      };
+    }),
+    routes: [
+      {
+        id: "route.recommended",
+        title: "Recommended build path",
+        summary: input.plan.summary,
+        rationale: "Derived from the capability dependency order and the learner knowledge graph.",
+        commitIds: input.plan.steps.map((step) => toStableCommitId(step.id)),
+        capabilityIds,
+        personalizedFor: input.plan.knowledgeGraph.gaps.slice(0, 6)
+      }
+    ],
+    activeRouteId: "route.recommended",
+    activeCommitId: input.plan.steps[0] ? toStableCommitId(input.plan.steps[0].id) : null,
+    alwaysVisibleFiles: uniquePaths([
+      ...input.draft.supportFiles.map((file) => file.path),
+      ...input.draft.entrypoints
+    ])
+  };
+}
+
+function buildAdaptiveFrontier(input: {
+  steps: ProjectBlueprint["steps"];
+  plan: GeneratedProjectPlan;
+  spine: NonNullable<ProjectBlueprint["spine"]>;
+  generatedAt: string;
+}): NonNullable<ProjectBlueprint["frontier"]> {
+  const suggestedIndex = Math.max(
+    0,
+    input.plan.steps.findIndex((step) => step.id === input.plan.suggestedFirstStepId)
+  );
+  const frontierSteps = input.steps.slice(
+    suggestedIndex,
+    Math.min(input.steps.length, suggestedIndex + 3)
+  );
+  const resolvedFrontierSteps = frontierSteps.length > 0 ? frontierSteps : input.steps.slice(0, 3);
+  const activeStep = resolvedFrontierSteps[0] ?? null;
+
+  return {
+    generatedAt: input.generatedAt,
+    summary:
+      resolvedFrontierSteps.length > 1
+        ? `The current build frontier focuses on ${resolvedFrontierSteps
+            .map((step) => step.title)
+            .join(", ")}.`
+        : `The current build frontier focuses on ${activeStep?.title ?? "the next capability"}.`,
+    activeStepId: activeStep?.id ?? null,
+    activeCommitId: activeStep?.commitId ?? input.spine.activeCommitId,
+    stepIds: resolvedFrontierSteps.map((step) => step.id),
+    steps: resolvedFrontierSteps,
+    diagnostics: [],
+    intervention: {
+      kind: "continue-to-code",
+      summary: "The next visible project slice is ready to build.",
+      reason: "Construct is starting with the current capability frontier and will adapt after evaluation points."
+    },
+    updating: false
+  };
+}
+
+function buildProjectPreview(
+  title: string,
+  summary: string,
+  entrypoint: string | null
+): ProjectBlueprint["steps"][number]["preview"] {
+  return {
+    kind: "trace",
+    title,
+    summary,
+    command: entrypoint ? `pnpm test -- ${entrypoint}` : null,
+    entrypoint,
+    sampleOutput: null
+  };
+}
+
+function toStableCommitId(stepId: string): string {
+  return `commit.${slugify(stepId)}`;
+}
+
+function toStableMilestoneId(stepId: string): string {
+  return `milestone.${slugify(stepId)}`;
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return Array.from(
+    new Set(
+      paths
+        .map((pathValue) => pathValue.replaceAll("\\", "/").replace(/^\.\/+/, "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
 function normalizeGeneratedLessonSlides(
   lessonSlides: GeneratedBlueprintStepDraft["lessonSlides"],
   fallbackDoc: string
@@ -5040,7 +5266,19 @@ function replaceBlueprintStep(
     ...blueprint,
     steps: blueprint.steps.map((currentStep) =>
       currentStep.id === step.id ? step : currentStep
-    )
+    ),
+    frontier: blueprint.frontier
+      ? {
+          ...blueprint.frontier,
+          activeStepId:
+            blueprint.frontier.activeStepId === step.id
+              ? step.id
+              : blueprint.frontier.activeStepId,
+          steps: blueprint.frontier.steps.map((currentStep) =>
+            currentStep.id === step.id ? step : currentStep
+          )
+        }
+      : null
   });
 }
 
@@ -5297,8 +5535,10 @@ function buildGoalSelfReportExtractionInstructions(): string {
 function buildPlanGenerationInstructions(): string {
   return [
     "You are Construct's Architect agent.",
-    "Generate a detailed personalized project roadmap for a serious learning-first IDE.",
+    "Generate the stable spine for a serious developer IDE that teaches through real system construction.",
     "The learner will build the real project in-place, so every step must contribute to the final system.",
+    "Think in terms of capabilities, milestones, staged commits, and dependency-aware visible outcomes.",
+    "Do not assume the future frontier will stay static forever. The near-term route may adapt after evaluation points.",
     "priorKnowledge is a recursive learner graph with nested concepts and sub-concepts. Use the deepest relevant weak or strong nodes, not just the top-level topic names.",
     "Use the learner's answers and prior knowledge to change step order, not just explanations.",
     "The answers payload includes the original question, the available options, and either a selected option or a custom freeform learner response. Use that full context rather than treating answers as generic scores.",
@@ -5321,6 +5561,8 @@ function buildBlueprintGenerationInstructions(): string {
   return [
     "You are Construct's Architect agent.",
     "Generate a real project blueprint for the learner to implement in-place.",
+    "Construct now follows a stable spine plus adaptive frontier architecture.",
+    "The canonical final project must stay coherent, but the next 1-3 visible steps should carry the deepest authored detail.",
     "priorKnowledge is a recursive learner graph. Use the most relevant subtopics to decide how much to explain, which examples to choose, and where the learner will need hand-holding.",
     "Return a runnable canonical project split into supportFiles, canonicalFiles, learnerFiles, and hiddenTests.",
     "Each of those file groups must be an array of objects shaped exactly like { path, content }.",
@@ -5371,7 +5613,8 @@ function buildBlueprintGenerationInstructions(): string {
     "doc should describe the exercise or implementation task itself, not repeat the whole concept lesson. It must clearly say what code the learner will change, what behavior the tests will verify, and how the task connects to the just-taught concept.",
     "The exercise should be solvable from the lessonSlides and checks that come before it. The quiz must be grounded in the lessonSlides, not random setup trivia or command memorization.",
     "Do not create a separate checks-only or quiz-only step. Keep slides, checks, and task together inside the same step.",
-    "Every generated step should feel like part of a coherent course: explanation first, then checks that follow from the explanation, then a real code task that directly uses what was just taught.",
+    "Every generated step should feel like part of a coherent build path: context first, then checks that follow from the explanation, then a real code task that directly uses what was just taught.",
+    "Prioritize the first 1-3 steps for depth, precision, and visible output. Later steps can stay lighter as long as the dependency order stays coherent.",
     "Keep the implementation inside the step budget defined by goalScope.recommendedMinSteps and goalScope.recommendedMaxSteps.",
     "Use goalScope.scopeSummary and goalScope.artifactShape to decide how small or broad the generated project should be.",
     "Choose build order from true project dependencies and the learner profile, not a generic tutorial order.",

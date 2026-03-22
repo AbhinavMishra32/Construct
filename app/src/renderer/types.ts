@@ -224,12 +224,25 @@ export type LessonSlide = {
   blocks: LessonSlideBlock[];
 };
 
+export type ProjectPreview = {
+  kind: "cli" | "api" | "ui" | "trace" | "graph" | "state";
+  title: string;
+  summary: string;
+  command: string | null;
+  entrypoint: string | null;
+  sampleOutput: string | null;
+};
+
 export type BlueprintStep = {
   id: string;
   title: string;
   summary: string;
   doc: string;
   lessonSlides: Array<string | LessonSlide>;
+  explanationSlides: Array<string | LessonSlide>;
+  capabilityId: string | null;
+  milestoneId: string | null;
+  commitId: string | null;
   anchor: {
     file: string;
     marker: string;
@@ -240,6 +253,8 @@ export type BlueprintStep = {
   concepts: string[];
   constraints: string[];
   checks: ComprehensionCheck[];
+  visibleFiles: string[];
+  preview: ProjectPreview | null;
   estimatedMinutes: number;
   difficulty: "intro" | "core" | "advanced";
 };
@@ -267,6 +282,26 @@ export type ProjectBlueprint = {
   entrypoints: string[];
   files: Record<string, string>;
   steps: BlueprintStep[];
+  spine: {
+    finalEntrypoints: string[];
+    commitGraph: Array<{
+      id: string;
+      title: string;
+      summary: string;
+      visibleFiles: string[];
+    }>;
+    activeCommitId: string | null;
+    alwaysVisibleFiles: string[];
+  } | null;
+  frontier: {
+    generatedAt: string;
+    summary: string;
+    activeStepId: string | null;
+    activeCommitId: string | null;
+    stepIds: string[];
+    steps: BlueprintStep[];
+    updating: boolean;
+  } | null;
   dependencyGraph: {
     nodes: DependencyNode[];
     edges: DependencyEdge[];

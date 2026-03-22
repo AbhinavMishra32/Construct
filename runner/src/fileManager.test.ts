@@ -58,3 +58,26 @@ test("WorkspaceFileManager rejects path escapes, including symlinks that resolve
     await rm(outsideRoot, { recursive: true, force: true });
   }
 });
+
+test("WorkspaceFileManager can expose only the current visible project slice", async () => {
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "construct-file-manager-visible-"));
+
+  try {
+    await mkdir(path.join(workspaceRoot, "src"), { recursive: true });
+    await writeFile(path.join(workspaceRoot, "src", "visible.ts"), "export const visible = true;\n");
+    await writeFile(path.join(workspaceRoot, "src", "hidden.ts"), "export const hidden = true;\n");
+
+    const fileManager = new WorkspaceFileManager(workspaceRoot, {
+      visibleFiles: ["src/visible.ts"]
+    });
+
+    const entries = await fileManager.listFiles();
+    assert.deepEqual(
+      entries.map((entry) => `${entry.kind}:${entry.path}`),
+      ["directory:src", "file:src/visible.ts"]
+    );
+    await assert.rejects(fileManager.readFile("src/hidden.ts"), WorkspacePathError);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});

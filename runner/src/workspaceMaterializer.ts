@@ -2,7 +2,10 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { ProjectBlueprintSchema, type ProjectBlueprint } from "@construct/shared";
+import {
+  ProjectBlueprintSchema,
+  type ProjectBlueprint
+} from "@construct/shared";
 
 const EXCLUDED_COPY_ENTRIES = new Set([
   ".construct",

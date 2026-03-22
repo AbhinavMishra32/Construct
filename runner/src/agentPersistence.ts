@@ -14,6 +14,7 @@ import {
   ProjectBlueprintSchema,
   ProjectSummarySchema,
   UserKnowledgeBaseSchema,
+  getBlueprintRuntimeSteps,
   type BlueprintBuild,
   type BlueprintBuildDetailResponse,
   type BlueprintBuildEventRecord,
@@ -1061,8 +1062,7 @@ function buildProjectRecordFromGeneratedRecord(
 ): PersistedProjectRecord {
   const blueprint = ProjectBlueprintSchema.parse(JSON.parse(record.blueprintJson));
   const plan = GeneratedProjectPlanSchema.parse(JSON.parse(record.planJson));
-  const initialStep =
-    blueprint.steps.find((step) => step.id === plan.suggestedFirstStepId) ?? blueprint.steps[0];
+  const progress = resolveBlueprintProgress(blueprint, plan);
   const timestamp = record.updatedAt;
 
   return PersistedProjectRecordSchema.parse({
@@ -1075,15 +1075,10 @@ function buildProjectRecordFromGeneratedRecord(
     blueprintPath: path.resolve(record.blueprintPath),
     projectRoot: path.resolve(record.projectRoot),
     learningStyle: plan.learningStyle,
-    currentStepId: initialStep?.id ?? null,
-    currentStepTitle: initialStep?.title ?? null,
-    currentStepIndex: initialStep
-      ? Math.max(
-          0,
-          blueprint.steps.findIndex((step) => step.id === initialStep.id)
-        )
-      : null,
-    totalSteps: blueprint.steps.length,
+    currentStepId: progress.id,
+    currentStepTitle: progress.title,
+    currentStepIndex: progress.index,
+    totalSteps: progress.totalSteps,
     completedStepIds: [],
     status: "in-progress",
     lastAttemptStatus: null,
@@ -1653,29 +1648,7 @@ function parseCurrentStepSummary(
   try {
     const blueprint = ProjectBlueprintSchema.parse(JSON.parse(rawBlueprint));
     const plan = GeneratedProjectPlanSchema.parse(JSON.parse(rawPlan));
-    const step =
-      blueprint.steps.find((entry) => entry.id === plan.suggestedFirstStepId) ??
-      blueprint.steps[0] ??
-      null;
-
-    if (!step) {
-      return {
-        id: null,
-        title: null,
-        index: null,
-        totalSteps: 0
-      };
-    }
-
-    return {
-      id: step.id,
-      title: step.title,
-      index: Math.max(
-        0,
-        blueprint.steps.findIndex((entry) => entry.id === step.id)
-      ),
-      totalSteps: blueprint.steps.length
-    };
+    return resolveBlueprintProgress(blueprint, plan);
   } catch {
     return {
       id: null,
@@ -1684,6 +1657,53 @@ function parseCurrentStepSummary(
       totalSteps: 0
     };
   }
+}
+
+function resolveBlueprintProgress(
+  blueprint: z.infer<typeof ProjectBlueprintSchema>,
+  plan: GeneratedProjectPlan
+): {
+  id: string | null;
+  title: string | null;
+  index: number | null;
+  totalSteps: number;
+} {
+  const runtimeSteps = getBlueprintRuntimeSteps(blueprint);
+  const preferredStepId = blueprint.frontier?.activeStepId ?? plan.suggestedFirstStepId;
+  const step =
+    runtimeSteps.find((entry) => entry.id === preferredStepId) ??
+    blueprint.steps.find((entry) => entry.id === preferredStepId) ??
+    runtimeSteps[0] ??
+    blueprint.steps[0] ??
+    null;
+
+  if (!step) {
+    return {
+      id: null,
+      title: null,
+      index: null,
+      totalSteps: 0
+    };
+  }
+
+  const commitIndex =
+    step.commitId && blueprint.spine
+      ? blueprint.spine.commitGraph.findIndex((commit) => commit.id === step.commitId)
+      : -1;
+  const stepIndex =
+    commitIndex >= 0
+      ? commitIndex
+      : Math.max(
+          0,
+          runtimeSteps.findIndex((entry) => entry.id === step.id)
+        );
+
+  return {
+    id: step.id,
+    title: step.title,
+    index: stepIndex,
+    totalSteps: blueprint.spine?.commitGraph.length ?? runtimeSteps.length
+  };
 }
 
 function toStateKey(userId: string, key: string): string {
