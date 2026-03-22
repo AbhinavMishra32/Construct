@@ -314,9 +314,10 @@ class LocalFileAgentPersistence implements AgentPersistence {
     await this.writeBlueprintRecords(nextRecords);
 
     const projects = await this.readProjects();
+    const existingProject = projects.find((project) => project.id === parsed.sessionId) ?? null;
     const nextProjects = upsertProjectRecord(
       projects,
-      buildProjectRecordFromGeneratedRecord(parsed)
+      buildProjectRecordFromGeneratedRecord(parsed, existingProject)
     );
     await this.writeProjects(nextProjects);
   }
@@ -782,7 +783,16 @@ class PrismaAgentPersistence implements AgentPersistence {
     record: PersistedGeneratedBlueprintRecord
   ): Promise<void> {
     const parsed = PersistedGeneratedBlueprintRecordSchema.parse(record);
-    const projectRecord = buildProjectRecordFromGeneratedRecord(parsed);
+    const existingProject = await this.prisma.project.findFirst({
+      where: {
+        userId: this.userId,
+        id: parsed.sessionId
+      }
+    });
+    const projectRecord = buildProjectRecordFromGeneratedRecord(
+      parsed,
+      existingProject ? toPersistedProjectRecordFromPrisma(existingProject) : null
+    );
 
     const operations = [];
 
@@ -1058,12 +1068,15 @@ function resolveStorageBackend(): StorageBackend {
 }
 
 function buildProjectRecordFromGeneratedRecord(
-  record: PersistedGeneratedBlueprintRecord
+  record: PersistedGeneratedBlueprintRecord,
+  existingRecord: PersistedProjectRecord | null = null
 ): PersistedProjectRecord {
   const blueprint = ProjectBlueprintSchema.parse(JSON.parse(record.blueprintJson));
   const plan = GeneratedProjectPlanSchema.parse(JSON.parse(record.planJson));
   const progress = resolveBlueprintProgress(blueprint, plan);
   const timestamp = record.updatedAt;
+  const completedStepIds = existingRecord?.completedStepIds ?? [];
+  const status = deriveProjectStatus(completedStepIds.length, progress.totalSteps);
 
   return PersistedProjectRecordSchema.parse({
     id: record.sessionId,
@@ -1079,15 +1092,17 @@ function buildProjectRecordFromGeneratedRecord(
     currentStepTitle: progress.title,
     currentStepIndex: progress.index,
     totalSteps: progress.totalSteps,
-    completedStepIds: [],
-    status: "in-progress",
-    lastAttemptStatus: null,
+    completedStepIds,
+    status,
+    lastAttemptStatus: existingRecord?.lastAttemptStatus ?? null,
     blueprintJson: record.blueprintJson,
     planJson: record.planJson,
     bundleJson: record.bundleJson,
-    createdAt: record.createdAt,
+    createdAt: existingRecord?.createdAt ?? record.createdAt,
     updatedAt: record.updatedAt,
-    lastOpenedAt: record.isActive ? timestamp : null,
+    lastOpenedAt: record.isActive
+      ? timestamp
+      : existingRecord?.lastOpenedAt ?? null,
     isActive: record.isActive
   });
 }
@@ -1297,6 +1312,60 @@ function toProjectSummaryFromPrisma(project: {
     completedStepsCount: completedStepIds.length,
     status: prismaStatusToSharedStatus(project.status),
     lastAttemptStatus,
+    createdAt: project.createdAt.toISOString(),
+    updatedAt: project.updatedAt.toISOString(),
+    lastOpenedAt: project.lastOpenedAt?.toISOString() ?? null,
+    isActive: project.isActive
+  });
+}
+
+function toPersistedProjectRecordFromPrisma(project: {
+  id: string;
+  goal: string;
+  name: string;
+  description: string;
+  language: string;
+  blueprintId: string;
+  blueprintPath: string;
+  projectRoot: string;
+  learningStyle: string | null;
+  currentStepId: string | null;
+  currentStepTitle: string | null;
+  currentStepIndex: number | null;
+  totalSteps: number;
+  completedStepIds: string;
+  status: string;
+  lastAttemptStatus: string | null;
+  blueprintJson: string;
+  planJson: string;
+  bundleJson: string;
+  createdAt: Date;
+  updatedAt: Date;
+  lastOpenedAt: Date | null;
+  isActive: boolean;
+}): PersistedProjectRecord {
+  return PersistedProjectRecordSchema.parse({
+    id: project.id,
+    goal: project.goal,
+    name: project.name,
+    description: project.description,
+    language: project.language,
+    blueprintId: project.blueprintId,
+    blueprintPath: project.blueprintPath,
+    projectRoot: project.projectRoot,
+    learningStyle: project.learningStyle,
+    currentStepId: project.currentStepId,
+    currentStepTitle: project.currentStepTitle,
+    currentStepIndex: project.currentStepIndex,
+    totalSteps: project.totalSteps,
+    completedStepIds: parseCompletedStepIdsFromPrisma(project.completedStepIds),
+    status: prismaStatusToSharedStatus(project.status),
+    lastAttemptStatus: project.lastAttemptStatus
+      ? ProjectAttemptStatusSchema.parse(project.lastAttemptStatus)
+      : null,
+    blueprintJson: project.blueprintJson,
+    planJson: project.planJson,
+    bundleJson: project.bundleJson,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
     lastOpenedAt: project.lastOpenedAt?.toISOString() ?? null,
@@ -1669,6 +1738,15 @@ function resolveBlueprintProgress(
   totalSteps: number;
 } {
   const runtimeSteps = getBlueprintRuntimeSteps(blueprint);
+  if (blueprint.frontier && runtimeSteps.length === 0 && blueprint.frontier.activeStepId === null) {
+    return {
+      id: null,
+      title: null,
+      index: null,
+      totalSteps: blueprint.spine?.commitGraph.length ?? plan.steps.length
+    };
+  }
+
   const preferredStepId = blueprint.frontier?.activeStepId ?? plan.suggestedFirstStepId;
   const step =
     runtimeSteps.find((entry) => entry.id === preferredStepId) ??

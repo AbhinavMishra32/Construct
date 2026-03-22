@@ -57,12 +57,16 @@ type WorkspaceContext = {
   taskLifecycle: TaskLifecycleService;
 };
 
+function invalidateWorkspaceContext(): void {
+  workspaceContextPromise = null;
+  workspaceContextBlueprintPath = "";
+}
+
 async function getWorkspaceContext(): Promise<WorkspaceContext | null> {
   const canonicalBlueprintPath = await getConstructAgent().getActiveBlueprintPath();
 
   if (!canonicalBlueprintPath) {
-    workspaceContextPromise = null;
-    workspaceContextBlueprintPath = "";
+    invalidateWorkspaceContext();
     return null;
   }
 
@@ -317,8 +321,7 @@ const server = http.createServer(async (request, response) => {
       const body = await readRequestBody(request);
       const selectionRequest = ProjectSelectionRequestSchema.parse(JSON.parse(body));
       const selection = await getConstructAgent().selectProject(selectionRequest.projectId);
-      workspaceContextPromise = null;
-      workspaceContextBlueprintPath = "";
+      invalidateWorkspaceContext();
 
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify(selection));
@@ -412,13 +415,17 @@ const server = http.createServer(async (request, response) => {
       const body = await readRequestBody(request);
       const submitRequest = TaskSubmitRequestSchema.parse(JSON.parse(body));
       const taskSubmission = await workspaceContext.taskLifecycle.submitTask(submitRequest);
-      await getConstructAgent().syncProjectTaskProgress({
+      const frontierUpdated = await getConstructAgent().syncProjectTaskProgress({
         canonicalBlueprintPath: workspaceContext.canonicalBlueprintPath,
         stepId: submitRequest.stepId,
         markStepCompleted: taskSubmission.attempt.status === "passed",
         lastAttemptStatus: taskSubmission.attempt.status,
         telemetry: taskSubmission.attempt.telemetry
       });
+
+      if (frontierUpdated) {
+        invalidateWorkspaceContext();
+      }
 
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify(taskSubmission));

@@ -11,6 +11,7 @@ import {
   ProjectBlueprintSchema,
   TaskExecutionRequestSchema,
   TaskResultSchema,
+  getBlueprintRuntimeSteps,
   type BlueprintTaskRequest,
   type ProjectBlueprint,
   type TaskExecutionRequest,
@@ -304,7 +305,9 @@ export async function resolveBlueprintStepRequest(
     blueprintPath: path.resolve(request.blueprintPath)
   });
   const blueprint = await loadBlueprint(parsedRequest.blueprintPath);
-  const step = blueprint.steps.find((candidate) => candidate.id === parsedRequest.stepId);
+  const step = getBlueprintRuntimeSteps(blueprint).find(
+    (candidate) => candidate.id === parsedRequest.stepId
+  );
 
   if (!step) {
     throw new BlueprintResolutionError(

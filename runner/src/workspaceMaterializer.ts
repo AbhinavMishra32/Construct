@@ -1,19 +1,12 @@
 import { existsSync } from "node:fs";
-import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
   ProjectBlueprintSchema,
+  getBlueprintMaterializedFilePaths,
   type ProjectBlueprint
 } from "@construct/shared";
-
-const EXCLUDED_COPY_ENTRIES = new Set([
-  ".construct",
-  "coverage",
-  "dist",
-  "node_modules",
-  "test-fixtures"
-]);
 
 export type PreparedWorkspace = {
   blueprint: ProjectBlueprint;
@@ -67,16 +60,14 @@ async function materializeWorkspace(input: {
   await rm(input.learnerWorkspaceRoot, { recursive: true, force: true });
   await mkdir(input.learnerWorkspaceRoot, { recursive: true });
 
-  const topLevelEntries = await readdir(input.sourceProjectRoot, { withFileTypes: true });
-
-  for (const entry of topLevelEntries) {
-    if (EXCLUDED_COPY_ENTRIES.has(entry.name)) {
+  for (const relativePath of getBlueprintMaterializedFilePaths(input.blueprint)) {
+    const sourcePath = path.join(input.sourceProjectRoot, relativePath);
+    if (!existsSync(sourcePath)) {
       continue;
     }
 
-    const sourcePath = path.join(input.sourceProjectRoot, entry.name);
-    const destinationPath = path.join(input.learnerWorkspaceRoot, entry.name);
-
+    const destinationPath = path.join(input.learnerWorkspaceRoot, relativePath);
+    await mkdir(path.dirname(destinationPath), { recursive: true });
     await cp(sourcePath, destinationPath, {
       recursive: true
     });

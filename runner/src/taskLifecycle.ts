@@ -29,7 +29,8 @@ import {
   type TaskStartResponse,
   type TaskSubmitRequest,
   type TaskSubmitResponse,
-  type TaskTelemetry
+  type TaskTelemetry,
+  getBlueprintRuntimeSteps
 } from "@construct/shared";
 
 import { SnapshotService } from "./snapshots";
@@ -341,7 +342,7 @@ export class TaskLifecycleService {
 
   private async resolveStep(blueprintPath: string, stepId: string): Promise<void> {
     const blueprint = await loadBlueprint(blueprintPath);
-    const step = blueprint.steps.find((entry) => entry.id === stepId);
+    const step = getBlueprintRuntimeSteps(blueprint).find((entry) => entry.id === stepId);
 
     if (!step) {
       throw new Error(`Unknown blueprint step: ${stepId}.`);

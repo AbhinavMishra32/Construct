@@ -82,6 +82,7 @@ import {
   getActiveBlueprintPath as getActiveBlueprintPathFromFile,
   setActiveBlueprintPath
 } from "./activeBlueprint";
+import { prepareLearnerWorkspace } from "./workspaceMaterializer";
 import {
   applyKnowledgeSignals,
   confidenceToScore,
@@ -434,6 +435,12 @@ const GENERATED_BLUEPRINT_BUNDLE_DRAFT_SCHEMA = z.object({
   tags: z.array(z.string().min(1))
 });
 
+const GENERATED_FRONTIER_DRAFT_SCHEMA = z.object({
+  learnerFiles: NON_EMPTY_FILE_CONTENTS_SCHEMA,
+  hiddenTests: NON_EMPTY_FILE_CONTENTS_SCHEMA,
+  steps: z.array(GENERATED_BLUEPRINT_STEP_DRAFT_SCHEMA).min(1).max(3)
+});
+
 const LESSON_AUTHORED_STEP_DRAFT_SCHEMA = z.object({
   summary: z.string().min(1),
   doc: z.string().min(1),
@@ -495,6 +502,7 @@ const SHORT_ANSWER_CHECK_REVIEW_DRAFT_SCHEMA = z.object({
 
 type GeneratedBlueprintBundleDraft = z.infer<typeof GENERATED_BLUEPRINT_BUNDLE_DRAFT_SCHEMA>;
 type GeneratedBlueprintStepDraft = z.infer<typeof GENERATED_BLUEPRINT_STEP_DRAFT_SCHEMA>;
+type GeneratedFrontierDraft = z.infer<typeof GENERATED_FRONTIER_DRAFT_SCHEMA>;
 type PlanningBuildCheckpoint = z.infer<typeof PLANNING_BUILD_CHECKPOINT_SCHEMA>;
 
 export class ConstructAgentService {
@@ -657,14 +665,14 @@ export class ConstructAgentService {
     markStepCompleted?: boolean;
     lastAttemptStatus?: "failed" | "passed" | "needs-review" | null;
     telemetry?: TaskTelemetry | null;
-  }): Promise<void> {
+  }): Promise<boolean> {
     const blueprint = await loadBlueprint(input.canonicalBlueprintPath);
     const runtimeSteps = getBlueprintRuntimeSteps(blueprint);
     const stepIndex = runtimeSteps.findIndex((step) => step.id === input.stepId);
     const step = stepIndex >= 0 ? runtimeSteps[stepIndex] : null;
 
     if (!step) {
-      return;
+      return false;
     }
 
     await this.persistence.updateProjectProgress({
@@ -684,6 +692,24 @@ export class ConstructAgentService {
         telemetry: input.telemetry
       });
     }
+
+    try {
+      return await this.applyTaskOutcomeToAdaptiveFrontier({
+        canonicalBlueprintPath: input.canonicalBlueprintPath,
+        step,
+        markStepCompleted: input.markStepCompleted ?? false,
+        lastAttemptStatus: input.lastAttemptStatus ?? null,
+        telemetry: input.telemetry ?? null
+      });
+    } catch (error) {
+      this.logger.warn("Adaptive frontier update failed after task evaluation. Keeping the existing path.", {
+        blueprintPath: input.canonicalBlueprintPath,
+        stepId: input.stepId,
+        status: input.lastAttemptStatus ?? null,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return false;
+    }
   }
 
   async reviewCheck(input: CheckReviewRequest): Promise<CheckReviewResponse> {
@@ -699,7 +725,571 @@ export class ConstructAgentService {
       attemptCount: input.attemptCount
     });
 
+    await this.recordAdaptiveFrontierDiagnostic({
+      stepId: input.stepId,
+      kind: "check-answer",
+      summary:
+        review.review.status === "complete"
+          ? `Confirmed the core check for ${input.stepTitle}.`
+          : `Detected a blocker in the check for ${input.stepTitle}.`,
+      evidence: review.review.message,
+      conceptIds: input.concepts,
+      intervention:
+        review.review.status === "complete"
+          ? {
+              kind: "continue-to-code",
+              summary: "The current step is ready to continue in code.",
+              reason: "The check result shows the learner can carry the concept back into the implementation."
+            }
+          : {
+              kind: "targeted-check",
+              summary: "Construct is holding on the current concept before moving further.",
+              reason: "The check response still missed a concept this implementation depends on."
+            }
+    });
+
     return CheckReviewResponseSchema.parse(review);
+  }
+
+  private async loadAdaptiveFrontierMutationContext(
+    canonicalBlueprintPath?: string | null
+  ): Promise<{
+    sessionId: string;
+    record: PersistedGeneratedBlueprintRecord;
+    build: BlueprintBuild | null;
+    plan: GeneratedProjectPlan;
+    bundle: GeneratedBlueprintBundleDraft;
+    blueprint: ProjectBlueprint;
+    canonicalBlueprintPath: string;
+    learnerBlueprintPath: string;
+    learnerWorkspaceRoot: string;
+    projectRoot: string;
+  } | null> {
+    const activeState = await this.persistence.getActiveBlueprintState();
+    const resolvedBlueprintPath = canonicalBlueprintPath
+      ? path.resolve(canonicalBlueprintPath)
+      : activeState
+        ? path.resolve(activeState.blueprintPath)
+        : null;
+
+    if (!resolvedBlueprintPath) {
+      return null;
+    }
+
+    let sessionId =
+      activeState &&
+      activeState.sessionId &&
+      path.resolve(activeState.blueprintPath) === resolvedBlueprintPath
+        ? activeState.sessionId
+        : null;
+
+    if (!sessionId) {
+      const projects = await this.persistence.listProjects();
+      sessionId =
+        projects.find((project) => path.resolve(project.blueprintPath) === resolvedBlueprintPath)?.id
+        ?? null;
+    }
+
+    if (!sessionId) {
+      return null;
+    }
+
+    const record = await this.persistence.getGeneratedBlueprintRecord(sessionId);
+    if (!record) {
+      return null;
+    }
+
+    const preparedWorkspace = await prepareLearnerWorkspace(resolvedBlueprintPath);
+
+    return {
+      sessionId,
+      record,
+      build: await this.persistence.getBlueprintBuildBySession(sessionId),
+      plan: GeneratedProjectPlanSchema.parse(JSON.parse(record.planJson)),
+      bundle: GENERATED_BLUEPRINT_BUNDLE_DRAFT_SCHEMA.parse(JSON.parse(record.bundleJson)),
+      blueprint: await loadBlueprint(resolvedBlueprintPath),
+      canonicalBlueprintPath: resolvedBlueprintPath,
+      learnerBlueprintPath: preparedWorkspace.learnerBlueprintPath,
+      learnerWorkspaceRoot: preparedWorkspace.learnerWorkspaceRoot,
+      projectRoot: record.projectRoot
+    };
+  }
+
+  private async applyTaskOutcomeToAdaptiveFrontier(input: {
+    canonicalBlueprintPath: string;
+    step: ProjectBlueprint["steps"][number];
+    markStepCompleted: boolean;
+    lastAttemptStatus: "failed" | "passed" | "needs-review" | null;
+    telemetry: TaskTelemetry | null;
+  }): Promise<boolean> {
+    if (!input.lastAttemptStatus) {
+      return false;
+    }
+
+    const context = await this.loadAdaptiveFrontierMutationContext(input.canonicalBlueprintPath);
+    if (!context?.blueprint.frontier || !context.blueprint.spine) {
+      return false;
+    }
+
+    const diagnosticTimestamp = this.now().toISOString();
+    const taskDiagnostic = {
+      id: `diagnostic.${slugify(input.step.id)}.${Date.parse(diagnosticTimestamp)}`,
+      kind:
+        input.lastAttemptStatus === "passed"
+          ? "submission-result"
+          : input.lastAttemptStatus === "needs-review"
+            ? "rewrite-gate"
+            : input.telemetry && input.telemetry.hintsUsed > 0
+              ? "hint-usage"
+              : "repeat-failure",
+      summary:
+        input.lastAttemptStatus === "passed"
+          ? `Completed ${input.step.title}.`
+          : input.lastAttemptStatus === "needs-review"
+            ? `Completion is paused for ${input.step.title}.`
+            : `Construct detected a blocker in ${input.step.title}.`,
+      evidence:
+        input.lastAttemptStatus === "passed"
+          ? `Targeted validation passed with hints=${input.telemetry?.hintsUsed ?? 0} and pasteRatio=${(input.telemetry?.pasteRatio ?? 0).toFixed(2)}.`
+          : input.lastAttemptStatus === "needs-review"
+            ? "Tests passed, but the rewrite gate or validation guard still needs learner-owned typing before Construct advances."
+            : `Targeted validation failed with hints=${input.telemetry?.hintsUsed ?? 0} and pasteRatio=${(input.telemetry?.pasteRatio ?? 0).toFixed(2)}.`,
+      conceptIds: input.step.concepts,
+      recordedAt: diagnosticTimestamp
+    } satisfies NonNullable<ProjectBlueprint["frontier"]>["diagnostics"][number];
+
+    if (input.markStepCompleted && input.lastAttemptStatus === "passed") {
+      const remainingFrontierSteps = context.blueprint.frontier.steps.filter(
+        (step) => step.id !== input.step.id
+      );
+      const cursorIndex = Math.max(
+        getPlanStepIndex(context.plan, input.step.id),
+        ...remainingFrontierSteps.map((step) => getPlanStepIndex(context.plan, step.id))
+      );
+      const nextPlanSteps = context.plan.steps
+        .filter((step, index) => index > cursorIndex)
+        .filter((step) => !remainingFrontierSteps.some((existing) => existing.id === step.id))
+        .slice(0, Math.max(0, 3 - remainingFrontierSteps.length));
+      const generatedFrontierDraft =
+        nextPlanSteps.length > 0
+          ? await this.generateAdaptiveFrontierDraft({
+              context,
+              frontierPlanSteps: nextPlanSteps,
+              reason: `Advance the build path after ${input.step.title} passed.`
+            })
+          : null;
+      const generatedSteps =
+        generatedFrontierDraft === null
+          ? []
+          : annotateGeneratedBlueprintSteps({
+              steps: normalizeGeneratedBlueprintSteps(generatedFrontierDraft.steps),
+              plan: context.plan,
+              entrypoint: context.blueprint.entrypoints[0] ?? null
+            });
+      const nextFrontierSteps = [...remainingFrontierSteps, ...generatedSteps].slice(0, 3);
+      const currentLearnerFiles = await this.readProjectFilesSnapshot(
+        context.learnerWorkspaceRoot,
+        Object.keys(context.blueprint.files)
+      );
+      const generatedLearnerFiles = fileEntriesToRecord(generatedFrontierDraft?.learnerFiles ?? []);
+      const nextBlueprint = ProjectBlueprintSchema.parse({
+        ...context.blueprint,
+        files: {
+          ...currentLearnerFiles,
+          ...generatedLearnerFiles
+        },
+        steps: mergeBlueprintStepRegistry(context.blueprint.steps, generatedSteps),
+        spine: {
+          ...context.blueprint.spine,
+          activeCommitId: nextFrontierSteps[0]?.commitId ?? input.step.commitId ?? context.blueprint.spine.activeCommitId
+        },
+        frontier: buildAdaptiveFrontier({
+          steps: nextFrontierSteps,
+          spine: {
+            ...context.blueprint.spine,
+            activeCommitId: nextFrontierSteps[0]?.commitId ?? input.step.commitId ?? context.blueprint.spine.activeCommitId
+          },
+          generatedAt: diagnosticTimestamp,
+          diagnostics: appendAdaptiveFrontierDiagnostic(
+            context.blueprint.frontier.diagnostics,
+            taskDiagnostic
+          ),
+          intervention: nextFrontierSteps.length > 0
+            ? {
+                kind: "mutate-frontier",
+                summary: `Construct advanced the build path to ${nextFrontierSteps[0]?.title ?? "the next capability"}.`,
+                reason: `${input.step.title} passed, so the next visible project slice has been rewritten around the remaining work.`
+              }
+            : {
+                kind: "return-to-code",
+                summary: "The adaptive frontier is complete.",
+                reason: "There are no remaining frontier commits to generate for this project."
+              },
+          activeStepId: nextFrontierSteps[0]?.id ?? null
+        })
+      });
+      const nextFrontierStepIds = new Set(nextFrontierSteps.map((step) => step.id));
+      const nextFrontierTestPaths = uniquePaths(nextFrontierSteps.flatMap((step) => step.tests));
+      const nextFrontierLearnerPaths = uniquePaths(
+        nextFrontierSteps.flatMap((step) => [step.anchor.file, ...step.visibleFiles])
+      );
+      const nextBundle =
+        nextFrontierSteps.length === 0
+          ? context.bundle
+          : GENERATED_BLUEPRINT_BUNDLE_DRAFT_SCHEMA.parse({
+              ...context.bundle,
+              learnerFiles: recordToFileEntries(
+                pickRecordPaths(nextBlueprint.files, nextFrontierLearnerPaths)
+              ),
+              hiddenTests: recordToFileEntries(
+                pickRecordPaths(
+                  {
+                    ...fileEntriesToRecord(context.bundle.hiddenTests),
+                    ...fileEntriesToRecord(generatedFrontierDraft?.hiddenTests ?? [])
+                  },
+                  nextFrontierTestPaths
+                )
+              ),
+              steps: mergeFrontierDraftSteps(
+                context.bundle.steps.filter((step) => nextFrontierStepIds.has(step.id)),
+                generatedFrontierDraft?.steps ?? []
+              )
+            });
+
+      await this.persistAdaptiveBlueprintState({
+        context,
+        blueprint: nextBlueprint,
+        bundle: nextBundle,
+        generatedLearnerFiles,
+        generatedHiddenTests: fileEntriesToRecord(generatedFrontierDraft?.hiddenTests ?? []),
+        event: {
+          stage: "adaptive-frontier",
+          title:
+            nextFrontierSteps.length > 0
+              ? `Updated the build frontier to ${nextFrontierSteps[0]?.title ?? "the next capability"}`
+              : "Completed the adaptive frontier",
+          detail:
+            nextFrontierSteps.length > 0
+              ? `Construct kept the stable project spine, preserved completed work, and generated the next ${nextFrontierSteps.length} active step(s).`
+              : "Construct reached the end of the current build path.",
+          level: "success",
+          payload: {
+            completedStepId: input.step.id,
+            activeStepId: nextBlueprint.frontier?.activeStepId ?? null,
+            frontierStepIds: nextBlueprint.frontier?.stepIds ?? []
+          }
+        }
+      });
+
+      return true;
+    }
+
+    await this.recordAdaptiveFrontierDiagnostic({
+      canonicalBlueprintPath: input.canonicalBlueprintPath,
+      stepId: input.step.id,
+      kind: taskDiagnostic.kind,
+      summary: taskDiagnostic.summary,
+      evidence: taskDiagnostic.evidence,
+      conceptIds: taskDiagnostic.conceptIds,
+      intervention:
+        input.lastAttemptStatus === "needs-review"
+          ? {
+              kind: "deepen-explanation",
+              summary: "Construct is holding the current capability before advancing.",
+              reason: "The validation guard indicates the learner still needs a more grounded implementation pass."
+            }
+          : input.telemetry && input.telemetry.hintsUsed >= 2
+            ? {
+                kind: "diagnostic-question",
+                summary: "Construct is switching into diagnosis mode on the current capability.",
+                reason: "The learner used several hints and still hit a failing validation."
+              }
+            : {
+                kind: "targeted-check",
+                summary: "Construct is keeping the focus on the current capability.",
+                reason: "The latest task result shows the learner needs another pass before the path should advance."
+              }
+    });
+
+    return false;
+  }
+
+  private async generateAdaptiveFrontierDraft(input: {
+    context: {
+      sessionId: string;
+      plan: GeneratedProjectPlan;
+      blueprint: ProjectBlueprint;
+      learnerWorkspaceRoot: string;
+      record: PersistedGeneratedBlueprintRecord;
+    };
+    frontierPlanSteps: GeneratedProjectPlan["steps"];
+    reason: string;
+  }): Promise<GeneratedFrontierDraft> {
+    const knowledgeBase = await this.readKnowledgeBase();
+    const currentWorkspaceFiles = await this.readProjectFilesSnapshot(
+      input.context.learnerWorkspaceRoot,
+      uniquePaths([
+        ...Object.keys(input.context.blueprint.files),
+        ...getBlueprintRuntimeSteps(input.context.blueprint).flatMap((step) => [
+          step.anchor.file,
+          ...step.visibleFiles
+        ])
+      ])
+    );
+    const draft = await this.getLlm().parse({
+      schema: GENERATED_FRONTIER_DRAFT_SCHEMA,
+      schemaName: "construct_generated_adaptive_frontier",
+      instructions: buildAdaptiveFrontierGenerationInstructions(),
+      prompt: JSON.stringify(
+        {
+          goal: input.context.record.goal,
+          project: {
+            name: input.context.blueprint.name,
+            description: input.context.blueprint.description,
+            language: input.context.blueprint.language,
+            entrypoints: input.context.blueprint.entrypoints
+          },
+          reason: input.reason,
+          planSummary: input.context.plan.summary,
+          selectedFrontierSteps: input.frontierPlanSteps,
+          currentFrontier: input.context.blueprint.frontier,
+          stableSpine: input.context.blueprint.spine,
+          currentWorkspaceFiles: recordToFileEntries(currentWorkspaceFiles),
+          priorKnowledge: serializeKnowledgeBaseForPrompt(knowledgeBase)
+        },
+        null,
+        2
+      ),
+      maxOutputTokens: 12_000,
+      verbosity: "medium"
+    });
+
+    return trimGeneratedFrontierDraftToPlan(
+      normalizeGeneratedFrontierDraft(draft),
+      input.frontierPlanSteps
+    );
+  }
+
+  private async readProjectFilesSnapshot(
+    projectRoot: string,
+    relativePaths: string[]
+  ): Promise<Record<string, string>> {
+    const snapshot: Record<string, string> = {};
+
+    for (const relativePath of uniquePaths(relativePaths)) {
+      const absolutePath = path.join(projectRoot, relativePath);
+      if (!existsSync(absolutePath)) {
+        continue;
+      }
+
+      snapshot[relativePath] = await readFile(absolutePath, "utf8");
+    }
+
+    return snapshot;
+  }
+
+  private async recordAdaptiveFrontierDiagnostic(input: {
+    canonicalBlueprintPath?: string | null;
+    stepId: string;
+    kind:
+      | "check-answer"
+      | "submission-result"
+      | "repeat-failure"
+      | "hint-usage"
+      | "runtime-question"
+      | "inactivity"
+      | "rewrite-gate"
+      | "debug-trace";
+    summary: string;
+    evidence: string;
+    conceptIds?: string[];
+    intervention: Exclude<NonNullable<ProjectBlueprint["frontier"]>["intervention"], null>;
+  }): Promise<void> {
+    const context = await this.loadAdaptiveFrontierMutationContext(input.canonicalBlueprintPath);
+    if (!context?.blueprint.frontier) {
+      return;
+    }
+
+    const timestamp = this.now().toISOString();
+    const nextBlueprint = ProjectBlueprintSchema.parse({
+      ...context.blueprint,
+      frontier: {
+        ...context.blueprint.frontier,
+        diagnostics: appendAdaptiveFrontierDiagnostic(
+          context.blueprint.frontier.diagnostics,
+          {
+            id: `diagnostic.${slugify(input.stepId)}.${Date.parse(timestamp)}`,
+            kind: input.kind,
+            summary: input.summary,
+            evidence: input.evidence,
+            conceptIds: input.conceptIds ?? [],
+            recordedAt: timestamp
+          }
+        ),
+        intervention: input.intervention,
+        updating: false
+      }
+    });
+
+    await this.persistAdaptiveBlueprintState({
+      context,
+      blueprint: nextBlueprint,
+      bundle: context.bundle,
+      event: {
+        stage: "adaptive-diagnostics",
+        title: input.summary,
+        detail: input.evidence,
+        level: "info",
+        payload: {
+          stepId: input.stepId,
+          kind: input.kind,
+          intervention: input.intervention.kind,
+          conceptIds: input.conceptIds ?? []
+        }
+      }
+    });
+  }
+
+  private async persistAdaptiveBlueprintState(input: {
+    context: {
+      sessionId: string;
+      record: PersistedGeneratedBlueprintRecord;
+      build: BlueprintBuild | null;
+      bundle: GeneratedBlueprintBundleDraft;
+      blueprint: ProjectBlueprint;
+      canonicalBlueprintPath: string;
+      learnerBlueprintPath: string;
+      learnerWorkspaceRoot: string;
+      projectRoot: string;
+    };
+    blueprint: ProjectBlueprint;
+    bundle: GeneratedBlueprintBundleDraft;
+    generatedLearnerFiles?: Record<string, string>;
+    generatedHiddenTests?: Record<string, string>;
+    event?: {
+      stage: string;
+      title: string;
+      detail: string;
+      level: "info" | "success" | "warning" | "error";
+      payload?: Record<string, unknown>;
+    };
+  }): Promise<void> {
+    const timestamp = this.now().toISOString();
+    const learnerBlueprint = ProjectBlueprintSchema.parse({
+      ...input.blueprint,
+      projectRoot: input.context.learnerWorkspaceRoot
+    });
+
+    if (input.generatedHiddenTests && Object.keys(input.generatedHiddenTests).length > 0) {
+      await this.writeProjectFiles(input.context.projectRoot, input.generatedHiddenTests);
+      await this.writeProjectFiles(input.context.learnerWorkspaceRoot, input.generatedHiddenTests);
+    }
+
+    if (input.generatedLearnerFiles && Object.keys(input.generatedLearnerFiles).length > 0) {
+      await this.writeProjectFiles(input.context.learnerWorkspaceRoot, input.generatedLearnerFiles);
+    }
+
+    await this.writeBlueprintFile(input.context.canonicalBlueprintPath, input.blueprint);
+    await this.writeBlueprintFile(input.context.learnerBlueprintPath, learnerBlueprint);
+
+    await this.persistence.saveGeneratedBlueprintRecord({
+      ...input.context.record,
+      blueprintPath: input.context.canonicalBlueprintPath,
+      projectRoot: input.context.projectRoot,
+      blueprintJson: JSON.stringify(input.blueprint),
+      bundleJson: JSON.stringify(input.bundle),
+      updatedAt: timestamp,
+      isActive: true
+    });
+    await this.persistence.setActiveBlueprintState({
+      blueprintPath: input.context.canonicalBlueprintPath,
+      sessionId: input.context.sessionId,
+      updatedAt: timestamp
+    });
+    await setActiveBlueprintPath({
+      rootDirectory: this.rootDirectory,
+      blueprintPath: input.context.canonicalBlueprintPath,
+      sessionId: input.context.sessionId,
+      now: this.now
+    });
+
+    if (input.context.build?.id) {
+      const currentBuild = input.context.build;
+      await this.mutateBlueprintBuild(currentBuild.id, (current) => ({
+        ...(current ?? currentBuild ?? createBlueprintBuildRecord({
+          id: input.context.sessionId,
+          sessionId: input.context.sessionId,
+          goal: input.context.record.goal,
+          createdAt: timestamp,
+          updatedAt: timestamp
+        })),
+        blueprint: input.blueprint,
+        blueprintDraft: input.bundle,
+        learnerFiles: toBlueprintArtifactFiles(input.bundle.learnerFiles, "learner"),
+        hiddenTests: toBlueprintArtifactFiles(input.bundle.hiddenTests, "hidden-tests"),
+        updatedAt: timestamp,
+        lastError: null,
+        currentStage: input.event?.stage ?? current?.currentStage ?? currentBuild.currentStage,
+        currentStageTitle: input.event?.title ?? current?.currentStageTitle ?? currentBuild.currentStageTitle,
+        currentStageStatus:
+          input.event?.level === "warning"
+            ? "warning"
+            : input.event?.level === "error"
+              ? "failed"
+              : "completed"
+      }));
+    }
+
+    if (input.event) {
+      await this.recordBlueprintBuildEventForSession(input.context.sessionId, input.event);
+    }
+  }
+
+  private async recordBlueprintBuildEventForSession(inputSessionId: string, event: {
+    stage: string;
+    title: string;
+    detail: string;
+    level: "info" | "success" | "warning" | "error";
+    payload?: Record<string, unknown>;
+  }): Promise<void> {
+    const build = await this.persistence.getBlueprintBuildBySession(inputSessionId);
+    if (!build) {
+      return;
+    }
+
+    const timestamp = this.now().toISOString();
+    const record = {
+      id: randomUUID(),
+      buildId: build.id,
+      jobId: null,
+      kind: null,
+      stage: event.stage,
+      title: event.title,
+      detail: event.detail,
+      level: event.level,
+      payload: cloneJsonCompatible(event.payload ?? null),
+      traceUrl: null,
+      timestamp
+    } satisfies Parameters<AgentPersistence["appendBlueprintBuildEvent"]>[0];
+
+    await this.enqueueBlueprintBuildWrite(async () => {
+      await this.persistence.appendBlueprintBuildEvent(record);
+      this.broadcastBlueprintBuild(build.id, "build-event", record);
+      await this.mutateBlueprintBuildUnsafe(build.id, (current) => ({
+        ...(current ?? build),
+        updatedAt: timestamp,
+        lastEventAt: timestamp,
+        currentStage: event.stage,
+        currentStageTitle: event.title,
+        currentStageStatus:
+          event.level === "warning"
+            ? "warning"
+            : event.level === "error"
+              ? "failed"
+              : "completed",
+        lastError: event.level === "error" ? event.detail : current?.lastError ?? null
+      }));
+    });
   }
 
   private reviewMultipleChoiceCheck(
@@ -964,6 +1554,18 @@ export class ConstructAgentService {
 
     void this.runJob(job, async () => {
       const result = await this.runRuntimeGuideGraph(job.jobId, request);
+      await this.recordAdaptiveFrontierDiagnostic({
+        stepId: request.stepId,
+        kind: "runtime-question",
+        summary: `Guide interaction opened for ${request.stepTitle}.`,
+        evidence: result.nextAction,
+        conceptIds: [],
+        intervention: {
+          kind: "return-to-code",
+          summary: "Construct answered in context and kept the current capability active.",
+          reason: "The learner asked for runtime guidance instead of advancing the path."
+        }
+      });
       return RuntimeGuideResponseSchema.parse(result);
     });
 
@@ -2013,11 +2615,17 @@ export class ConstructAgentService {
             throw new Error("Cannot generate a blueprint before the project plan exists.");
           }
 
+          const initialFrontierPlanSteps = selectPlanFrontierSteps(state.plan, {
+            startStepId: state.plan.suggestedFirstStepId,
+            maxSteps: 3
+          });
+
           const blueprintRequestContext = {
             stepCount: state.plan.steps.length,
             architectureNodeCount: state.plan.architecture.length,
             suggestedFirstStepId: state.plan.suggestedFirstStepId,
-            firstStepTitle: state.plan.steps[0]?.title ?? null
+            firstStepTitle: initialFrontierPlanSteps[0]?.title ?? state.plan.steps[0]?.title ?? null,
+            frontierStepCount: initialFrontierPlanSteps.length
           };
 
           const job = this.jobs.get(jobId);
@@ -2048,16 +2656,17 @@ export class ConstructAgentService {
             schemaName: "construct_generated_blueprint_bundle",
             instructions: buildBlueprintGenerationInstructions(),
             prompt: JSON.stringify(
-              {
-                session: state.session,
-                goalScope: state.goalScope,
-                answers: resolvedAnswers,
-                plan: state.plan,
-                priorKnowledge: serializeKnowledgeBaseForPrompt(state.knowledgeBase),
-                research: compactResearchDigest(state.mergedResearch)
-              },
-              null,
-              2
+                {
+                  session: state.session,
+                  goalScope: state.goalScope,
+                  answers: resolvedAnswers,
+                  planSpine: state.plan,
+                  frontierPlanSteps: initialFrontierPlanSteps,
+                  priorKnowledge: serializeKnowledgeBaseForPrompt(state.knowledgeBase),
+                  research: compactResearchDigest(state.mergedResearch)
+                },
+                null,
+                2
             ),
             maxOutputTokens: 20_000,
             verbosity: "medium",
@@ -2066,7 +2675,10 @@ export class ConstructAgentService {
             stream.onComplete?.();
           });
 
-          const bundleDraft = normalizeGeneratedBlueprintDraft(initialBundleDraft);
+          const bundleDraft = trimGeneratedBundleDraftToFrontier(
+            normalizeGeneratedBlueprintDraft(initialBundleDraft),
+            initialFrontierPlanSteps
+          );
 
           if (job) {
             this.emitEvent(job, {
@@ -3215,8 +3827,8 @@ export class ConstructAgentService {
     const generatedAt = this.now().toISOString();
     const normalizedSteps = annotateGeneratedBlueprintSteps({
       steps: normalizeGeneratedBlueprintSteps(draft.steps),
-      draft,
-      plan
+      plan,
+      entrypoint: draft.entrypoints[0] ?? null
     });
     const spine = buildStableSpine({
       plan,
@@ -3224,7 +3836,6 @@ export class ConstructAgentService {
     });
     const frontier = buildAdaptiveFrontier({
       steps: normalizedSteps,
-      plan,
       spine,
       generatedAt
     });
@@ -4922,6 +5533,18 @@ function normalizeGeneratedBlueprintDraft(
   };
 }
 
+function normalizeGeneratedFrontierDraft(
+  draft: GeneratedFrontierDraft
+): GeneratedFrontierDraft {
+  return {
+    ...draft,
+    steps: draft.steps.map((step) => ({
+      ...step,
+      lessonSlides: normalizeDraftLessonSlides(step.lessonSlides, step.doc)
+    }))
+  };
+}
+
 function mergeLessonAuthoredStepDraft(
   step: GeneratedBlueprintStepDraft,
   authoredStep: z.infer<typeof LESSON_AUTHORED_STEP_DRAFT_SCHEMA>
@@ -4955,22 +5578,18 @@ function normalizeGeneratedBlueprintSteps(
 
 function annotateGeneratedBlueprintSteps(input: {
   steps: ProjectBlueprint["steps"];
-  draft: GeneratedBlueprintBundleDraft;
   plan: GeneratedProjectPlan;
+  entrypoint: string | null;
 }): ProjectBlueprint["steps"] {
-  const draftStepMap = new Map(input.draft.steps.map((step) => [step.id, step] as const));
-
   return input.steps.map((step, index) => {
     const plannedStep = input.plan.steps.find((candidate) => candidate.id === step.id)
       ?? input.plan.steps[index]
       ?? null;
-    const draftStep = draftStepMap.get(step.id) ?? null;
     const commitId = plannedStep ? toStableCommitId(plannedStep.id) : null;
     const milestoneId = plannedStep ? toStableMilestoneId(plannedStep.id) : null;
     const visibleFiles = uniquePaths([
       step.anchor.file,
-      ...(plannedStep?.suggestedFiles ?? []),
-      ...(draftStep ? [draftStep.anchor.file] : [])
+      ...(plannedStep?.suggestedFiles ?? [])
     ]);
 
     return BlueprintStepSchema.parse({
@@ -4989,7 +5608,11 @@ function annotateGeneratedBlueprintSteps(input: {
           learnerVisible: true
         }
       ],
-      preview: buildProjectPreview(step.title, plannedStep?.validationFocus?.[0] ?? step.summary, input.draft.entrypoints[0] ?? null)
+      preview: buildProjectPreview(
+        step.title,
+        plannedStep?.validationFocus?.[0] ?? step.summary,
+        input.entrypoint
+      )
     });
   });
 }
@@ -5087,41 +5710,151 @@ function buildStableSpine(input: {
 
 function buildAdaptiveFrontier(input: {
   steps: ProjectBlueprint["steps"];
-  plan: GeneratedProjectPlan;
   spine: NonNullable<ProjectBlueprint["spine"]>;
   generatedAt: string;
+  diagnostics?: NonNullable<ProjectBlueprint["frontier"]>["diagnostics"];
+  intervention?: NonNullable<ProjectBlueprint["frontier"]>["intervention"];
+  activeStepId?: string | null;
 }): NonNullable<ProjectBlueprint["frontier"]> {
-  const suggestedIndex = Math.max(
-    0,
-    input.plan.steps.findIndex((step) => step.id === input.plan.suggestedFirstStepId)
-  );
-  const frontierSteps = input.steps.slice(
-    suggestedIndex,
-    Math.min(input.steps.length, suggestedIndex + 3)
-  );
-  const resolvedFrontierSteps = frontierSteps.length > 0 ? frontierSteps : input.steps.slice(0, 3);
-  const activeStep = resolvedFrontierSteps[0] ?? null;
+  const resolvedFrontierSteps = input.steps.slice(0, 3);
+  const requestedActiveStep = input.activeStepId
+    ? resolvedFrontierSteps.find((step) => step.id === input.activeStepId) ?? null
+    : null;
+  const activeStep = requestedActiveStep ?? resolvedFrontierSteps[0] ?? null;
 
   return {
     generatedAt: input.generatedAt,
     summary:
       resolvedFrontierSteps.length > 1
-        ? `The current build frontier focuses on ${resolvedFrontierSteps
-            .map((step) => step.title)
-            .join(", ")}.`
-        : `The current build frontier focuses on ${activeStep?.title ?? "the next capability"}.`,
+        ? `The current build frontier focuses on ${resolvedFrontierSteps.map((step) => step.title).join(", ")}.`
+        : resolvedFrontierSteps.length === 1
+          ? `The current build frontier focuses on ${activeStep?.title ?? "the next capability"}.`
+          : "The current build frontier is clear while Construct prepares the next capability.",
     activeStepId: activeStep?.id ?? null,
     activeCommitId: activeStep?.commitId ?? input.spine.activeCommitId,
     stepIds: resolvedFrontierSteps.map((step) => step.id),
     steps: resolvedFrontierSteps,
-    diagnostics: [],
-    intervention: {
+    diagnostics: input.diagnostics ?? [],
+    intervention: input.intervention ?? {
       kind: "continue-to-code",
       summary: "The next visible project slice is ready to build.",
       reason: "Construct is starting with the current capability frontier and will adapt after evaluation points."
     },
     updating: false
   };
+}
+
+function selectPlanFrontierSteps(
+  plan: GeneratedProjectPlan,
+  options?: {
+    startStepId?: string | null;
+    maxSteps?: number;
+  }
+): GeneratedProjectPlan["steps"] {
+  if (plan.steps.length === 0) {
+    return [];
+  }
+
+  const maxSteps = Math.min(Math.max(options?.maxSteps ?? 3, 1), 3);
+  const requestedStartStepId = options?.startStepId ?? plan.suggestedFirstStepId;
+  const requestedStartIndex = requestedStartStepId
+    ? plan.steps.findIndex((step) => step.id === requestedStartStepId)
+    : -1;
+  const startIndex = requestedStartIndex >= 0 ? requestedStartIndex : 0;
+
+  return plan.steps.slice(startIndex, startIndex + maxSteps);
+}
+
+function trimGeneratedBundleDraftToFrontier(
+  draft: GeneratedBlueprintBundleDraft,
+  frontierPlanSteps: GeneratedProjectPlan["steps"]
+): GeneratedBlueprintBundleDraft {
+  if (frontierPlanSteps.length === 0) {
+    return draft;
+  }
+
+  const allowedStepIds = new Set(frontierPlanSteps.map((step) => step.id));
+  const trimmedSteps = draft.steps.filter((step) => allowedStepIds.has(step.id));
+  const resolvedSteps = trimmedSteps.length > 0
+    ? trimmedSteps
+    : draft.steps.slice(0, Math.min(draft.steps.length, frontierPlanSteps.length));
+  const allowedLearnerPaths = new Set(
+    uniquePaths([
+      ...frontierPlanSteps.flatMap((step) => step.suggestedFiles),
+      ...resolvedSteps.map((step) => step.anchor.file)
+    ])
+  );
+  const allowedTestPaths = new Set(uniquePaths(resolvedSteps.flatMap((step) => step.tests)));
+  const filteredLearnerFiles = draft.learnerFiles.filter(
+    (file) => allowedLearnerPaths.size === 0 || allowedLearnerPaths.has(normalizePathValue(file.path))
+  );
+  const filteredHiddenTests = draft.hiddenTests.filter(
+    (file) => allowedTestPaths.size === 0 || allowedTestPaths.has(normalizePathValue(file.path))
+  );
+
+  return normalizeGeneratedBlueprintDraft({
+    ...draft,
+    learnerFiles: filteredLearnerFiles.length > 0 ? filteredLearnerFiles : draft.learnerFiles,
+    hiddenTests: filteredHiddenTests.length > 0 ? filteredHiddenTests : draft.hiddenTests,
+    steps: resolvedSteps
+  });
+}
+
+function trimGeneratedFrontierDraftToPlan(
+  draft: GeneratedFrontierDraft,
+  frontierPlanSteps: GeneratedProjectPlan["steps"]
+): GeneratedFrontierDraft {
+  if (frontierPlanSteps.length === 0) {
+    return draft;
+  }
+
+  const allowedStepIds = new Set(frontierPlanSteps.map((step) => step.id));
+  const trimmedSteps = draft.steps.filter((step) => allowedStepIds.has(step.id));
+  const resolvedSteps = trimmedSteps.length > 0
+    ? trimmedSteps
+    : draft.steps.slice(0, Math.min(draft.steps.length, frontierPlanSteps.length));
+  const allowedLearnerPaths = new Set(
+    uniquePaths([
+      ...frontierPlanSteps.flatMap((step) => step.suggestedFiles),
+      ...resolvedSteps.map((step) => step.anchor.file)
+    ])
+  );
+  const allowedTestPaths = new Set(uniquePaths(resolvedSteps.flatMap((step) => step.tests)));
+  const filteredLearnerFiles = draft.learnerFiles.filter(
+    (file) => allowedLearnerPaths.size === 0 || allowedLearnerPaths.has(normalizePathValue(file.path))
+  );
+  const filteredHiddenTests = draft.hiddenTests.filter(
+    (file) => allowedTestPaths.size === 0 || allowedTestPaths.has(normalizePathValue(file.path))
+  );
+
+  return normalizeGeneratedFrontierDraft({
+    learnerFiles: filteredLearnerFiles.length > 0 ? filteredLearnerFiles : draft.learnerFiles,
+    hiddenTests: filteredHiddenTests.length > 0 ? filteredHiddenTests : draft.hiddenTests,
+    steps: resolvedSteps
+  });
+}
+
+function mergeBlueprintStepRegistry(
+  existingSteps: ProjectBlueprint["steps"],
+  nextSteps: ProjectBlueprint["steps"]
+): ProjectBlueprint["steps"] {
+  const nextStepIds = new Set(nextSteps.map((step) => step.id));
+  return [...existingSteps.filter((step) => !nextStepIds.has(step.id)), ...nextSteps];
+}
+
+function mergeFrontierDraftSteps(
+  existingSteps: GeneratedBlueprintBundleDraft["steps"],
+  nextSteps: GeneratedBlueprintBundleDraft["steps"]
+): GeneratedBlueprintBundleDraft["steps"] {
+  const nextStepIds = new Set(nextSteps.map((step) => step.id));
+  return [...existingSteps.filter((step) => !nextStepIds.has(step.id)), ...nextSteps];
+}
+
+function appendAdaptiveFrontierDiagnostic(
+  diagnostics: NonNullable<ProjectBlueprint["frontier"]>["diagnostics"],
+  nextDiagnostic: NonNullable<ProjectBlueprint["frontier"]>["diagnostics"][number]
+): NonNullable<ProjectBlueprint["frontier"]>["diagnostics"] {
+  return [...diagnostics, nextDiagnostic].slice(-12);
 }
 
 function buildProjectPreview(
@@ -5145,6 +5878,10 @@ function toStableCommitId(stepId: string): string {
 
 function toStableMilestoneId(stepId: string): string {
   return `milestone.${slugify(stepId)}`;
+}
+
+function getPlanStepIndex(plan: GeneratedProjectPlan, stepId: string): number {
+  return plan.steps.findIndex((step) => step.id === stepId);
 }
 
 function uniquePaths(paths: string[]): string[] {
@@ -5256,6 +5993,33 @@ function normalizeGeneratedChecks(
       ...(check.placeholder === null ? {} : { placeholder: check.placeholder })
     };
   });
+}
+
+function pickRecordPaths(
+  record: Record<string, string>,
+  relativePaths: string[]
+): Record<string, string> {
+  const picked: Record<string, string> = {};
+
+  for (const relativePath of uniquePaths(relativePaths)) {
+    const value = record[relativePath];
+    if (typeof value === "string") {
+      picked[relativePath] = value;
+    }
+  }
+
+  return picked;
+}
+
+function recordToFileEntries(record: Record<string, string>): Array<{ path: string; content: string }> {
+  return Object.entries(record).map(([filePath, content]) => ({
+    path: filePath,
+    content
+  }));
+}
+
+function normalizePathValue(pathValue: string): string {
+  return pathValue.replaceAll("\\", "/").replace(/^\.\/+/, "").trim();
 }
 
 function replaceBlueprintStep(
@@ -5562,16 +6326,18 @@ function buildBlueprintGenerationInstructions(): string {
     "You are Construct's Architect agent.",
     "Generate a real project blueprint for the learner to implement in-place.",
     "Construct now follows a stable spine plus adaptive frontier architecture.",
-    "The canonical final project must stay coherent, but the next 1-3 visible steps should carry the deepest authored detail.",
+    "The canonical final project must stay coherent, but only the next 1-3 visible steps should carry the deepest authored detail.",
+    "The prompt includes planSpine for the full long-range dependency order and frontierPlanSteps for the only steps that should be deeply authored right now.",
     "priorKnowledge is a recursive learner graph. Use the most relevant subtopics to decide how much to explain, which examples to choose, and where the learner will need hand-holding.",
     "Return a runnable canonical project split into supportFiles, canonicalFiles, learnerFiles, and hiddenTests.",
     "Each of those file groups must be an array of objects shaped exactly like { path, content }.",
     "supportFiles are unmasked project files such as package.json, pyproject.toml, tsconfig, helper modules, and fixed runtime scaffolding.",
     "canonicalFiles are the solved versions of the learner-owned implementation files.",
-    "learnerFiles must correspond to the same file paths as canonicalFiles, but with focused TASK markers and incomplete implementations the learner must fill in.",
-    "hiddenTests must validate the learner tasks and stay runnable without exposing full solutions in the learnerFiles.",
+    "learnerFiles must only cover the current frontierPlanSteps and must correspond to the same file paths as the canonical implementation for those frontier capabilities, but with focused TASK markers and incomplete implementations the learner must fill in.",
+    "hiddenTests must only cover the current frontierPlanSteps and stay runnable without exposing full solutions in the learnerFiles.",
     "The answers payload includes the original question, the available options, and either a selected option or a custom freeform learner response. Use that context to tune scope, docs, checks, and task ordering.",
-    "Every step must point to a real learnerFile anchor and include lessonSlides, doc text, comprehension checks, constraints, and targeted tests.",
+    "Every returned step must point to a real learnerFile anchor in the current frontier and include lessonSlides, doc text, comprehension checks, constraints, and targeted tests.",
+    "Do not deeply author every future step in the spine. Only the frontierPlanSteps should come back as learnerFiles, hiddenTests, and steps.",
     "lessonSlides are the main teaching surface. Each slide must be an object with a blocks array.",
     "A markdown block looks like { type: 'markdown', markdown: '...' }.",
     "An inline question block looks like { type: 'check', placement: 'inline' | 'end', check: <same comprehension check shape> }.",
@@ -5620,6 +6386,25 @@ function buildBlueprintGenerationInstructions(): string {
     "Choose build order from true project dependencies and the learner profile, not a generic tutorial order.",
     "For TypeScript and JavaScript projects, generate Jest tests and the minimum package/tooling files required to run them.",
     "Do not emit placeholder prose instead of code. Return concrete file contents."
+  ].join("\n");
+}
+
+function buildAdaptiveFrontierGenerationInstructions(): string {
+  return [
+    "You are Construct's Architect agent.",
+    "Regenerate only the next adaptive frontier for a real project-building IDE.",
+    "The stable spine already exists. Do not rewrite the entire project.",
+    "Return only learnerFiles, hiddenTests, and steps for the selectedFrontierSteps in the prompt.",
+    "learnerFiles must preserve the current working project state while introducing only the next masked implementation targets.",
+    "If a selected frontier step extends a file the learner already touched, carry forward the working code from currentWorkspaceFiles and add only the next focused TASK marker or placeholder region.",
+    "hiddenTests must validate only the currently selected frontier steps.",
+    "Every returned step must include a real anchor, substantial explanation slides, grounded checks, constraints, and targeted tests.",
+    "Use priorKnowledge, the current frontier, and the stated reason to decide how much hand-holding or decomposition the learner now needs.",
+    "The selectedFrontierSteps are the only steps that should be deeply authored right now. Do not author the rest of the spine.",
+    "Keep the project feeling like a real system under construction, not a detached tutorial.",
+    "The returned steps should read like serious build guidance: explain why this capability matters now, how it fits the architecture, and exactly what behavior the learner is unlocking.",
+    "Do not dump the full solution into the explanation slides.",
+    "Return concrete file contents and valid JSON only."
   ].join("\n");
 }
 

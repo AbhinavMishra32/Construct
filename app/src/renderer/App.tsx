@@ -1234,15 +1234,23 @@ export default function App() {
 
       if (submission.attempt.status !== "passed") {
         void loadRuntimeGuide(submission.attempt.result);
-      }
-
-      setStatusMessage(
-        submission.attempt.status === "passed"
-          ? `Passed ${activeStep.title} on attempt ${submission.attempt.attempt}.`
-          : submission.attempt.status === "needs-review" && submission.session.rewriteGate
+        setStatusMessage(
+          submission.attempt.status === "needs-review" && submission.session.rewriteGate
             ? `Tests passed, but completion is blocked. Retype at least ${submission.session.rewriteGate.requiredTypedChars} characters without large paste and resubmit.`
             : `Targeted tests failed for ${activeStep.title} on attempt ${submission.attempt.attempt}.`
-      );
+        );
+      } else {
+        setStatusMessage(`Passed ${activeStep.title} on attempt ${submission.attempt.attempt}. Updating path...`);
+        const refreshedBlueprint = await hydrateWorkspace();
+        const nextStep = refreshedBlueprint ? getRuntimeSteps(refreshedBlueprint)[0] ?? null : null;
+        setGuideVisible(false);
+        setSurfaceMode("brief");
+        setStatusMessage(
+          nextStep && nextStep.id !== activeStep.id
+            ? `Passed ${activeStep.title}. Next capability: ${nextStep.title}.`
+            : `Passed ${activeStep.title} on attempt ${submission.attempt.attempt}.`
+        );
+      }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : `Failed to execute ${activeStep.id}.`;

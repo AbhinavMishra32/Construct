@@ -254,8 +254,8 @@ export const AdaptiveFrontierSchema = z.object({
   summary: z.string().min(1),
   activeStepId: z.string().min(1).nullable().default(null),
   activeCommitId: z.string().min(1).nullable().default(null),
-  stepIds: z.array(z.string().min(1)).min(1).max(3),
-  steps: z.array(BlueprintStepSchema).min(1).max(3),
+  stepIds: z.array(z.string().min(1)).max(3).default([]),
+  steps: z.array(BlueprintStepSchema).max(3).default([]),
   diagnostics: z.array(DiagnosticSignalSchema).default([]),
   intervention: MentorInterventionSchema.nullable().default(null),
   updating: z.boolean().default(false)
@@ -528,7 +528,7 @@ export const PlanMutationSchema = z.object({
 export function getBlueprintRuntimeSteps(
   blueprint: Pick<ProjectBlueprint, "steps" | "frontier">
 ): BlueprintStep[] {
-  if (blueprint.frontier?.steps.length) {
+  if (blueprint.frontier) {
     return blueprint.frontier.steps;
   }
 
@@ -555,12 +555,20 @@ export function getBlueprintVisibleFilePaths(
   }
 
   const activeCommitId = blueprint.frontier?.activeCommitId ?? blueprint.spine?.activeCommitId;
-  const activeCommit = activeCommitId
-    ? blueprint.spine?.commitGraph.find((commit) => commit.id === activeCommitId) ?? null
-    : null;
+  if (blueprint.spine?.commitGraph?.length) {
+    const activeCommitIndex = activeCommitId
+      ? blueprint.spine.commitGraph.findIndex((commit) => commit.id === activeCommitId)
+      : blueprint.spine.commitGraph.length - 1;
+    const revealedCommits =
+      activeCommitIndex >= 0
+        ? blueprint.spine.commitGraph.slice(0, activeCommitIndex + 1)
+        : [];
 
-  for (const relativePath of activeCommit?.visibleFiles ?? []) {
-    visiblePaths.add(normalizeBlueprintPath(relativePath));
+    for (const commit of revealedCommits) {
+      for (const relativePath of commit.visibleFiles) {
+        visiblePaths.add(normalizeBlueprintPath(relativePath));
+      }
+    }
   }
 
   for (const step of getBlueprintRuntimeSteps(blueprint)) {
@@ -578,6 +586,20 @@ export function getBlueprintVisibleFilePaths(
   }
 
   return Array.from(visiblePaths).filter(Boolean).sort();
+}
+
+export function getBlueprintMaterializedFilePaths(
+  blueprint: Pick<ProjectBlueprint, "entrypoints" | "files" | "steps" | "frontier" | "spine">
+): string[] {
+  const materializedPaths = new Set(getBlueprintVisibleFilePaths(blueprint));
+
+  for (const step of getBlueprintRuntimeSteps(blueprint)) {
+    for (const testPath of step.tests) {
+      materializedPaths.add(normalizeBlueprintPath(testPath));
+    }
+  }
+
+  return Array.from(materializedPaths).filter(Boolean).sort();
 }
 
 export type AnchorRef = z.infer<typeof AnchorSchema>;

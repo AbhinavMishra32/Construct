@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +10,7 @@ import type { StoredKnowledgeConcept } from "@construct/shared";
 import { ConstructAgentService } from "./agentService";
 import { createAgentPersistence, type AgentPersistence } from "./agentPersistence";
 import { findKnowledgeConcept } from "./knowledgeGraph";
+import { prepareLearnerWorkspace } from "./workspaceMaterializer";
 
 const previousStorageBackend = process.env.CONSTRUCT_STORAGE_BACKEND;
 const previousDatabaseUrl = process.env.DATABASE_URL;
@@ -635,6 +637,561 @@ test("ConstructAgentService creates question and plan jobs and persists the resu
     const resumedState = await resumedService.getCurrentPlanningState();
     assert.equal(resumedState.session?.goal, "build a C compiler in Rust");
     assert.equal(await resumedService.getActiveBlueprintPath(), generatedBlueprintPath);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ConstructAgentService advances the adaptive frontier after a passed step and grows the learner workspace", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "construct-agent-frontier-"));
+  let tick = 0;
+
+  const service = new ConstructAgentService(root, {
+    now: () => new Date(Date.UTC(2026, 2, 16, 0, 0, tick++)),
+    logger: {
+      info() {},
+      debug() {},
+      trace() {},
+      warn() {},
+      error() {}
+    },
+    projectInstaller: {
+      async install() {
+        return {
+          status: "skipped",
+          packageManager: "none",
+          detail: "No install needed for this frontier test."
+        };
+      }
+    },
+    search: {
+      async research(query) {
+        return {
+          query,
+          answer: "Build the parser in small staged files.",
+          sources: []
+        };
+      }
+    },
+    llm: {
+      async parse({ schemaName, schema }) {
+        if (schemaName === "construct_goal_self_report_signals") {
+          return schema.parse({ signals: [] });
+        }
+
+        if (schemaName === "construct_goal_scope") {
+          return schema.parse({
+            scopeSummary: "Small staged parser project",
+            artifactShape: "parser utility",
+            complexityScore: 42,
+            shouldResearch: false,
+            recommendedQuestionCount: 2,
+            recommendedMinSteps: 3,
+            recommendedMaxSteps: 5,
+            rationale: "The request is compact enough to skip broad research."
+          });
+        }
+
+        if (schemaName === "construct_planning_question_draft") {
+          return schema.parse({
+            detectedLanguage: "typescript",
+            detectedDomain: "parser",
+            questions: [
+              {
+                conceptId: "typescript.functions",
+                category: "language",
+                prompt: "How comfortable are you with small TypeScript utility functions?",
+                options: [
+                  {
+                    id: "solid",
+                    label: "Comfortable",
+                    description: "I can write small utility functions without much help.",
+                    confidenceSignal: "comfortable"
+                  },
+                  {
+                    id: "partial",
+                    label: "Need reminders",
+                    description: "I know the shape, but I still want guidance.",
+                    confidenceSignal: "shaky"
+                  },
+                  {
+                    id: "new",
+                    label: "Need first-principles help",
+                    description: "I need the implementation path broken down carefully.",
+                    confidenceSignal: "new"
+                  }
+                ]
+              },
+              {
+                conceptId: "domain.parsers",
+                category: "domain",
+                prompt: "How comfortable are you with incremental parser construction?",
+                options: [
+                  {
+                    id: "solid",
+                    label: "Comfortable",
+                    description: "I know how to stage parser pieces over a few commits.",
+                    confidenceSignal: "comfortable"
+                  },
+                  {
+                    id: "partial",
+                    label: "Somewhat comfortable",
+                    description: "I understand the idea, but I want help sequencing it.",
+                    confidenceSignal: "shaky"
+                  },
+                  {
+                    id: "new",
+                    label: "New to me",
+                    description: "I need the build path staged carefully.",
+                    confidenceSignal: "new"
+                  }
+                ]
+              }
+            ]
+          });
+        }
+
+        if (schemaName === "construct_generated_project_plan") {
+          return schema.parse({
+            summary: "Start with one import parser, then grow the repo with export and entrypoint parsing.",
+            knowledgeGraph: {
+              concepts: [
+                {
+                  id: "typescript.functions",
+                  label: "TypeScript utility functions",
+                  category: "language",
+                  path: ["typescript", "functions"],
+                  labelPath: ["TypeScript", "Functions"],
+                  confidence: "shaky",
+                  rationale: "The learner wants step-by-step help."
+                }
+              ],
+              strengths: [],
+              gaps: ["TypeScript utility functions"]
+            },
+            architecture: [
+              {
+                id: "component.imports",
+                label: "Import parsing",
+                kind: "component",
+                summary: "Parse import lines into a tiny structure.",
+                dependsOn: []
+              },
+              {
+                id: "component.exports",
+                label: "Export parsing",
+                kind: "component",
+                summary: "Parse export lines once import parsing exists.",
+                dependsOn: ["component.imports"]
+              },
+              {
+                id: "component.entrypoint",
+                label: "Entrypoint parsing",
+                kind: "component",
+                summary: "Recognize the first executable statement after imports and exports.",
+                dependsOn: ["component.exports"]
+              }
+            ],
+            steps: [
+              {
+                id: "step.parse-imports",
+                title: "Parse import lines",
+                kind: "implementation",
+                objective: "Parse import lines from a source file.",
+                rationale: "Imports are the first real parser behavior and unlock the rest of the staged repo.",
+                concepts: ["typescript.functions", "domain.parsers"],
+                dependsOn: [],
+                validationFocus: ["Returns one node per import line."],
+                suggestedFiles: ["src/imports.ts"],
+                implementationNotes: ["Keep the parser tiny and deterministic."],
+                quizFocus: ["Why staged parsing keeps the repo coherent."],
+                hiddenValidationFocus: ["Parses imports in source order."]
+              },
+              {
+                id: "step.parse-exports",
+                title: "Parse export lines",
+                kind: "implementation",
+                objective: "Extend the parser to recognize export lines.",
+                rationale: "Exports are the next visible capability after imports.",
+                concepts: ["domain.parsers"],
+                dependsOn: ["step.parse-imports"],
+                validationFocus: ["Returns one node per export line."],
+                suggestedFiles: ["src/exports.ts"],
+                implementationNotes: ["Reuse the tiny string scanning style from imports."],
+                quizFocus: ["Why export parsing belongs in its own step."],
+                hiddenValidationFocus: ["Keeps export parsing independent of imports."]
+              },
+              {
+                id: "step.parse-entrypoint",
+                title: "Parse the entrypoint statement",
+                kind: "implementation",
+                objective: "Identify the first executable statement after imports and exports.",
+                rationale: "The entrypoint step makes the parser visibly more complete.",
+                concepts: ["domain.parsers"],
+                dependsOn: ["step.parse-exports"],
+                validationFocus: ["Returns the first executable statement."],
+                suggestedFiles: ["src/entrypoint.ts"],
+                implementationNotes: ["Use the import/export helpers instead of duplicating scans."],
+                quizFocus: ["Why the parser spine needs this after imports and exports."],
+                hiddenValidationFocus: ["Skips import and export declarations when finding the entrypoint."]
+              }
+            ],
+            suggestedFirstStepId: "step.parse-imports"
+          });
+        }
+
+        if (schemaName === "construct_generated_blueprint_bundle") {
+          return schema.parse({
+            projectName: "Tiny Module Graph",
+            projectSlug: "tiny-module-graph",
+            description: "A staged parser project that grows file by file.",
+            language: "typescript",
+            entrypoints: ["src/index.ts"],
+            supportFiles: [
+              {
+                path: "package.json",
+                content: JSON.stringify({
+                  name: "@construct/tiny-module-graph",
+                  private: true,
+                  type: "module"
+                }, null, 2)
+              },
+              {
+                path: "src/index.ts",
+                content: [
+                  "export * from './imports';",
+                  "export * from './exports';",
+                  "export * from './entrypoint';"
+                ].join("\n")
+              }
+            ],
+            canonicalFiles: [
+              {
+                path: "src/imports.ts",
+                content: [
+                  "export function parseImports(source: string): string[] {",
+                  "  return source.split('\\n').filter((line) => line.startsWith('import '));",
+                  "}"
+                ].join("\n")
+              },
+              {
+                path: "src/exports.ts",
+                content: [
+                  "export function parseExports(source: string): string[] {",
+                  "  return source.split('\\n').filter((line) => line.startsWith('export '));",
+                  "}"
+                ].join("\n")
+              },
+              {
+                path: "src/entrypoint.ts",
+                content: [
+                  "export function parseEntrypoint(source: string): string | null {",
+                  "  return source.split('\\n').find((line) => !line.startsWith('import ') && !line.startsWith('export ')) ?? null;",
+                  "}"
+                ].join("\n")
+              }
+            ],
+            learnerFiles: [
+              {
+                path: "src/imports.ts",
+                content: [
+                  "export function parseImports(source: string): string[] {",
+                  "  // TASK:parse-imports",
+                  "  throw new Error('Implement import parsing');",
+                  "}"
+                ].join("\n")
+              }
+            ],
+            hiddenTests: [
+              {
+                path: "tests/imports.test.ts",
+                content: [
+                  "import { parseImports } from '../src/imports';",
+                  "",
+                  "test('parseImports keeps import lines in order', () => {",
+                  "  expect(parseImports('import a\\nconst x = 1\\nimport b')).toEqual(['import a', 'import b']);",
+                  "});"
+                ].join("\n")
+              }
+            ],
+            steps: [
+              {
+                id: "step.parse-imports",
+                title: "Parse import lines",
+                summary: "Implement the first staged parser capability.",
+                doc: "Edit src/imports.ts at TASK:parse-imports and return import lines in order.",
+                lessonSlides: [
+                  markdownSlide("## Why imports come first\nThis is the first visible parser capability."),
+                  markdownSlide("## What the parser must preserve\nKeep import lines in source order.")
+                ],
+                anchor: {
+                  file: "src/imports.ts",
+                  marker: "TASK:parse-imports",
+                  startLine: null,
+                  endLine: null
+                },
+                tests: ["tests/imports.test.ts"],
+                concepts: ["typescript.functions", "domain.parsers"],
+                constraints: ["Keep import lines in source order."],
+                checks: [
+                  {
+                    id: "check.imports.1",
+                    type: "mcq",
+                    prompt: "Why should this parser keep source order?",
+                    options: [
+                      { id: "a", label: "Later parsing stages depend on the original order.", rationale: null },
+                      { id: "b", label: "It only matters for prettier diffs.", rationale: null }
+                    ],
+                    answer: "a"
+                  }
+                ],
+                estimatedMinutes: 10,
+                difficulty: "intro"
+              }
+            ],
+            dependencyGraph: {
+              nodes: [
+                { id: "component.imports", label: "Import parsing", kind: "component" },
+                { id: "component.exports", label: "Export parsing", kind: "component" },
+                { id: "component.entrypoint", label: "Entrypoint parsing", kind: "component" }
+              ],
+              edges: [
+                { from: "component.imports", to: "component.exports", reason: "Exports build on the staged parser spine." },
+                { from: "component.exports", to: "component.entrypoint", reason: "Entrypoint parsing depends on skipping imports and exports." }
+              ]
+            },
+            tags: ["parser", "frontier"]
+          });
+        }
+
+        if (schemaName === "construct_authored_blueprint_step") {
+          return schema.parse({
+            summary: "Implement the first staged parser capability.",
+            doc: "Edit `src/imports.ts` at `TASK:parse-imports` and return import lines in source order.",
+            lessonSlides: [
+              markdownSlide("## Why this capability matters\nThe parser spine starts with a tiny import recognizer."),
+              markdownSlide("## How the implementation works\nSplit on newlines, keep only import lines, and preserve order."),
+              markdownSlide("## How this maps to the next capability\nOnce imports work, exports can grow as the next frontier.")
+            ],
+            checks: [
+              {
+                id: "check.imports.1",
+                type: "mcq",
+                prompt: "Why should the parser keep import lines in order?",
+                options: [
+                  { id: "a", label: "Later stages depend on source order.", rationale: null },
+                  { id: "b", label: "It only affects formatting.", rationale: null }
+                ],
+                answer: "a"
+              }
+            ]
+          });
+        }
+
+        if (schemaName === "construct_generated_adaptive_frontier") {
+          return schema.parse({
+            learnerFiles: [
+              {
+                path: "src/exports.ts",
+                content: [
+                  "export function parseExports(source: string): string[] {",
+                  "  // TASK:parse-exports",
+                  "  throw new Error('Implement export parsing');",
+                  "}"
+                ].join("\n")
+              },
+              {
+                path: "src/entrypoint.ts",
+                content: [
+                  "export function parseEntrypoint(source: string): string | null {",
+                  "  // TASK:parse-entrypoint",
+                  "  throw new Error('Implement entrypoint parsing');",
+                  "}"
+                ].join("\n")
+              }
+            ],
+            hiddenTests: [
+              {
+                path: "tests/exports.test.ts",
+                content: [
+                  "import { parseExports } from '../src/exports';",
+                  "",
+                  "test('parseExports keeps export lines in order', () => {",
+                  "  expect(parseExports('export a\\nconst x = 1\\nexport b')).toEqual(['export a', 'export b']);",
+                  "});"
+                ].join("\n")
+              },
+              {
+                path: "tests/entrypoint.test.ts",
+                content: [
+                  "import { parseEntrypoint } from '../src/entrypoint';",
+                  "",
+                  "test('parseEntrypoint skips imports and exports', () => {",
+                  "  expect(parseEntrypoint('import a\\nexport b\\nrun()')).toBe('run()');",
+                  "});"
+                ].join("\n")
+              }
+            ],
+            steps: [
+              {
+                id: "step.parse-exports",
+                title: "Parse export lines",
+                summary: "Grow the parser with export recognition.",
+                doc: "Edit src/exports.ts at TASK:parse-exports and return export lines in order.",
+                lessonSlides: [
+                  markdownSlide("## Why exports are next\nThe visible repo grows once imports are stable."),
+                  markdownSlide("## What stays the same\nUse the same deterministic line scanning style as the imports step.")
+                ],
+                anchor: {
+                  file: "src/exports.ts",
+                  marker: "TASK:parse-exports",
+                  startLine: null,
+                  endLine: null
+                },
+                tests: ["tests/exports.test.ts"],
+                concepts: ["domain.parsers"],
+                constraints: ["Keep export lines in source order."],
+                checks: [
+                  {
+                    id: "check.exports.1",
+                    type: "mcq",
+                    prompt: "Why is this a separate frontier step instead of part of imports?",
+                    options: [
+                      { id: "a", label: "It adds one capability while keeping the staged repo runnable.", rationale: null },
+                      { id: "b", label: "It only changes the project name.", rationale: null }
+                    ],
+                    answer: "a"
+                  }
+                ],
+                estimatedMinutes: 10,
+                difficulty: "core"
+              },
+              {
+                id: "step.parse-entrypoint",
+                title: "Parse the entrypoint statement",
+                summary: "Add the next visible parser behavior after imports and exports.",
+                doc: "Edit src/entrypoint.ts at TASK:parse-entrypoint and return the first executable statement.",
+                lessonSlides: [
+                  markdownSlide("## Why the entrypoint matters\nThis step makes the parser visibly more complete."),
+                  markdownSlide("## How to scan for it\nSkip imports and exports, then keep the first executable line.")
+                ],
+                anchor: {
+                  file: "src/entrypoint.ts",
+                  marker: "TASK:parse-entrypoint",
+                  startLine: null,
+                  endLine: null
+                },
+                tests: ["tests/entrypoint.test.ts"],
+                concepts: ["domain.parsers"],
+                constraints: ["Skip imports and exports before choosing the entrypoint."],
+                checks: [
+                  {
+                    id: "check.entrypoint.1",
+                    type: "mcq",
+                    prompt: "What should the parser skip before selecting the entrypoint?",
+                    options: [
+                      { id: "a", label: "Import and export declarations", rationale: null },
+                      { id: "b", label: "Every line with text", rationale: null }
+                    ],
+                    answer: "a"
+                  }
+                ],
+                estimatedMinutes: 12,
+                difficulty: "core"
+              }
+            ]
+          });
+        }
+
+        throw new Error(`Unexpected schema request: ${schemaName}`);
+      }
+    }
+  });
+
+  try {
+    const questionJob = service.createPlanningQuestionsJob({
+      goal: "build a tiny module graph parser",
+      learningStyle: "build-first"
+    });
+    const questionResult = await waitForJobCompletion(service, questionJob.jobId);
+    const questionSession = questionResult.result as {
+      session: { sessionId: string; questions: Array<{ id: string }> };
+    };
+
+    const planJob = service.createPlanningPlanJob({
+      sessionId: questionSession.session.sessionId,
+      answers: questionSession.session.questions.map((question) => ({
+        questionId: question.id,
+        answerType: "option" as const,
+        optionId: "partial"
+      }))
+    });
+    await waitForJobCompletion(service, planJob.jobId);
+
+    const generatedProjectDirectories = await readdir(
+      path.join(root, ".construct", "generated-blueprints")
+    );
+    const generatedBlueprintPath = path.join(
+      root,
+      ".construct",
+      "generated-blueprints",
+      generatedProjectDirectories[0]!,
+      "project-blueprint.json"
+    );
+
+    const prepared = await prepareLearnerWorkspace(generatedBlueprintPath);
+    assert.equal(existsSync(path.join(prepared.learnerWorkspaceRoot, "src", "imports.ts")), true);
+    assert.equal(existsSync(path.join(prepared.learnerWorkspaceRoot, "src", "exports.ts")), false);
+    assert.equal(existsSync(path.join(prepared.learnerWorkspaceRoot, "src", "entrypoint.ts")), false);
+
+    await writeFile(
+      path.join(prepared.learnerWorkspaceRoot, "src", "imports.ts"),
+      [
+        "export function parseImports(source: string): string[] {",
+        "  return source.split('\\n').filter((line) => line.startsWith('import '));",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const frontierUpdated = await service.syncProjectTaskProgress({
+      canonicalBlueprintPath: generatedBlueprintPath,
+      stepId: "step.parse-imports",
+      markStepCompleted: true,
+      lastAttemptStatus: "passed",
+      telemetry: {
+        hintsUsed: 1,
+        pasteRatio: 0.05,
+        typedChars: 120,
+        pastedChars: 4
+      }
+    });
+
+    assert.equal(frontierUpdated, true);
+
+    const updatedBlueprint = JSON.parse(
+      await readFile(generatedBlueprintPath, "utf8")
+    ) as {
+      files: Record<string, string>;
+      frontier: { stepIds: string[]; activeStepId: string | null } | null;
+    };
+    assert.deepEqual(updatedBlueprint.frontier?.stepIds, [
+      "step.parse-exports",
+      "step.parse-entrypoint"
+    ]);
+    assert.equal(updatedBlueprint.frontier?.activeStepId, "step.parse-exports");
+    assert.match(updatedBlueprint.files["src/imports.ts"] ?? "", /return source\.split/);
+    assert.match(updatedBlueprint.files["src/exports.ts"] ?? "", /TASK:parse-exports/);
+    assert.match(updatedBlueprint.files["src/entrypoint.ts"] ?? "", /TASK:parse-entrypoint/);
+
+    assert.equal(existsSync(path.join(prepared.learnerWorkspaceRoot, "src", "exports.ts")), true);
+    assert.equal(existsSync(path.join(prepared.learnerWorkspaceRoot, "src", "entrypoint.ts")), true);
+
+    const dashboard = await service.listProjectsDashboard();
+    const activeProject =
+      dashboard.projects.find((project) => project.id === dashboard.activeProjectId) ?? null;
+    assert.equal(activeProject?.currentStepId, "step.parse-exports");
+    assert.equal(activeProject?.completedStepsCount, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
